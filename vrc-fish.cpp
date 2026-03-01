@@ -9,6 +9,7 @@
 #include <vector>
 #include <sstream>
 #include <deque>
+#include <ShlObj.h>
 #include "ini.h"
 #include "gs-public.h"
 #include "gs-opencv.h"
@@ -17,6 +18,7 @@
 #pragma comment(lib, "opencv_imgproc460.lib")
 #pragma comment(lib, "opencv_imgcodecs460.lib")
 #pragma comment(lib, "opencv_highgui460.lib")
+#pragma comment(lib, "shell32.lib")
 using namespace std;
 using namespace cv;
 
@@ -99,6 +101,10 @@ struct g_config {
 	double fish_scale_2;
 	double fish_scale_3;
 	double fish_scale_4;
+	double track_scale_1;
+	double track_scale_2;
+	double track_scale_3;
+	double track_scale_4;
 
 	int slider_detect_half_width;
 	int slider_detect_merge_gap;
@@ -193,6 +199,10 @@ void loadConfig() {
 	config.fish_scale_2 = ini.getDouble("vrchat_fish", "fish_scale_2", 1.0);
 	config.fish_scale_3 = ini.getDouble("vrchat_fish", "fish_scale_3", 1.2);
 	config.fish_scale_4 = ini.getDouble("vrchat_fish", "fish_scale_4", 1.5);
+	config.track_scale_1 = ini.getDouble("vrchat_fish", "track_scale_1", 0.9);
+	config.track_scale_2 = ini.getDouble("vrchat_fish", "track_scale_2", 1.0);
+	config.track_scale_3 = ini.getDouble("vrchat_fish", "track_scale_3", 1.2);
+	config.track_scale_4 = ini.getDouble("vrchat_fish", "track_scale_4", 1.5);
 	config.slider_detect_half_width = ini.getInt("vrchat_fish", "slider_detect_half_width", 4);
 	config.slider_detect_merge_gap = ini.getInt("vrchat_fish", "slider_detect_merge_gap", 40);
 	config.track_pad_y = ini.getInt("vrchat_fish", "track_pad_y", 30);
@@ -495,41 +505,49 @@ TplMatch matchBestRoi(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi
 	return out;
 }
 
-static TplMatch matchBestRoiMultiScale(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi, int method = TM_CCOEFF_NORMED, double* bestScaleOut = nullptr) {
+static TplMatch matchBestRoiMultiScaleByScales(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi,
+	const double* scales, int scaleCount, int method = TM_CCOEFF_NORMED, double* bestScaleOut = nullptr) {
 	TplMatch best{};
 	if (srcGray.empty() || tpl.empty()) return best;
 	roi = clampRect(roi, srcGray.size());
 	if (roi.width <= 0 || roi.height <= 0) return best;
 	Mat sub = srcGray(roi);
 
-	const double fishScales[4] = {
-		config.fish_scale_1,
-		config.fish_scale_2,
-		config.fish_scale_3,
-		config.fish_scale_4
-	};
 	double bestScale = 1.0;
-	for (double s : fishScales) {
-		if (s <= 0.0) {
-			continue;
-		}
+	if (!scales || scaleCount <= 0) {
+		// fallback: single scale=1.0
 		g_params::GrayTpl scaled{};
-		if (std::abs(s - 1.0) < 1e-6) {
-			scaled.gray = tpl.gray;
-			scaled.mask = tpl.mask;
-		} else {
-			int tw = std::max(1, (int)std::round(tpl.gray.cols * s));
-			int th = std::max(1, (int)std::round(tpl.gray.rows * s));
-			resize(tpl.gray, scaled.gray, Size(tw, th), 0, 0, INTER_AREA);
-			if (!tpl.mask.empty()) {
-				resize(tpl.mask, scaled.mask, Size(tw, th), 0, 0, INTER_NEAREST);
-			}
-		}
-		if (sub.cols < scaled.gray.cols || sub.rows < scaled.gray.rows) continue;
-		TplMatch m = matchBest(sub, scaled, method);
-		if (m.score > best.score) {
+		scaled.gray = tpl.gray;
+		scaled.mask = tpl.mask;
+		if (sub.cols >= scaled.gray.cols && sub.rows >= scaled.gray.rows) {
+			TplMatch m = matchBest(sub, scaled, method);
 			best = m;
-			bestScale = s;
+			bestScale = 1.0;
+		}
+	} else {
+		for (int i = 0; i < scaleCount; i++) {
+			double s = scales[i];
+			if (!std::isfinite(s) || s <= 0.0) {
+				continue;
+			}
+			g_params::GrayTpl scaled{};
+			if (std::abs(s - 1.0) < 1e-6) {
+				scaled.gray = tpl.gray;
+				scaled.mask = tpl.mask;
+			} else {
+				int tw = std::max(1, (int)std::round(tpl.gray.cols * s));
+				int th = std::max(1, (int)std::round(tpl.gray.rows * s));
+				resize(tpl.gray, scaled.gray, Size(tw, th), 0, 0, INTER_AREA);
+				if (!tpl.mask.empty()) {
+					resize(tpl.mask, scaled.mask, Size(tw, th), 0, 0, INTER_NEAREST);
+				}
+			}
+			if (sub.cols < scaled.gray.cols || sub.rows < scaled.gray.rows) continue;
+			TplMatch m = matchBest(sub, scaled, method);
+			if (m.score > best.score) {
+				best = m;
+				bestScale = s;
+			}
 		}
 	}
 	// 坐标从 sub-ROI 空间偏移回原图空间
@@ -539,6 +557,16 @@ static TplMatch matchBestRoiMultiScale(const Mat& srcGray, const g_params::GrayT
 	best.rect.y += roi.y;
 	if (bestScaleOut) *bestScaleOut = bestScale;
 	return best;
+}
+
+static TplMatch matchBestRoiMultiScale(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi, int method = TM_CCOEFF_NORMED, double* bestScaleOut = nullptr) {
+	const double fishScales[4] = {
+		config.fish_scale_1,
+		config.fish_scale_2,
+		config.fish_scale_3,
+		config.fish_scale_4
+	};
+	return matchBestRoiMultiScaleByScales(srcGray, tpl, roi, fishScales, 4, method, bestScaleOut);
 }
 
 // 单尺度模板匹配（用于控制循环的快速路径）
@@ -654,14 +682,23 @@ static bool ensureDirExists(const std::string& dir) {
 	if (dir.empty()) {
 		return false;
 	}
-	DWORD attrs = GetFileAttributesA(dir.c_str());
-	if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+
+	std::string path = dir;
+	std::replace(path.begin(), path.end(), '/', '\\');
+
+	DWORD attrs = GetFileAttributesA(path.c_str());
+	if (attrs != INVALID_FILE_ATTRIBUTES) {
+		return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	}
+
+	int rc = SHCreateDirectoryExA(NULL, path.c_str(), NULL);
+	if (rc == ERROR_SUCCESS || rc == ERROR_ALREADY_EXISTS || rc == ERROR_FILE_EXISTS) {
 		return true;
 	}
-	if (CreateDirectoryA(dir.c_str(), NULL)) {
-		return true;
-	}
-	return GetLastError() == ERROR_ALREADY_EXISTS;
+
+	// Re-check in case another process created it.
+	attrs = GetFileAttributesA(path.c_str());
+	return (attrs != INVALID_FILE_ATTRIBUTES) && ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0);
 }
 
 static std::string makeDebugPath(const std::string& tag) {
@@ -1082,26 +1119,27 @@ void fishVrchat() {
 			}
 		};
 
-		if (!config.vr_log_file.empty()) {
-			// 确保目录存在（仅支持单层目录；路径不含目录则跳过）
-			auto dirNameOf = [&](const std::string& path) -> std::string {
-				size_t pos = path.find_last_of("/\\");
-				if (pos == std::string::npos) return "";
-				if (pos == 0) return "";
-				return path.substr(0, pos);
-			};
-			std::string dir = dirNameOf(config.vr_log_file);
-			if (!dir.empty()) {
-				ensureDirExists(dir);
+			if (!config.vr_log_file.empty()) {
+				// 确保目录存在（支持多级目录；路径不含目录则跳过）
+				auto dirNameOf = [&](const std::string& path) -> std::string {
+					size_t pos = path.find_last_of("/\\");
+					if (pos == std::string::npos) return "";
+					if (pos == 0) return "";
+					return path.substr(0, pos);
+				};
+				std::string dir = dirNameOf(config.vr_log_file);
+				if (!dir.empty()) {
+					ensureDirExists(dir);
+				}
+				vrLogFile.open(config.vr_log_file, std::ios::out | std::ios::app);
+				if (!vrLogFile.is_open()) {
+					std::cout << "[vrchat_fish] WARN: failed to open vr_log_file=" << config.vr_log_file
+						<< " (check working dir / file lock)" << endl;
+				}
+				else {
+					writeVrLogLine("[vrchat_fish] log start file=" + config.vr_log_file, config.vr_debug);
+				}
 			}
-			vrLogFile.open(config.vr_log_file, std::ios::out | std::ios::app);
-			if (!vrLogFile.is_open()) {
-				std::cout << "[vrchat_fish] WARN: failed to open vr_log_file=" << config.vr_log_file << endl;
-			}
-			else {
-				writeVrLogLine("[vrchat_fish] log start file=" + config.vr_log_file, config.vr_debug);
-			}
-		}
 
 		auto switchState = [&](VrFishState next) {
 			if (config.vr_debug || vrLogFile.is_open()) {
@@ -1277,7 +1315,15 @@ void fishVrchat() {
 
 			// ── 首帧：用 minigame_bar_full 模板定位完整轨道，取右半部分作为滑块/鱼检测 ROI ──
 			if (!hasFixedTrack) {
-				TplMatch barMatch = matchBestRoi(gray, params.tpl_vr_minigame_bar_full, searchRoi, TM_CCOEFF_NORMED);
+				double barScale = 1.0;
+				const double trackScales[4] = {
+					config.track_scale_1,
+					config.track_scale_2,
+					config.track_scale_3,
+					config.track_scale_4
+				};
+				TplMatch barMatch = matchBestRoiMultiScaleByScales(gray, params.tpl_vr_minigame_bar_full, searchRoi,
+					trackScales, 4, TM_CCOEFF_NORMED, &barScale);
 				if (barMatch.score >= config.minigame_threshold) {
 					// 轨道定位成功：取匹配区域的右半部分作为滑块和鱼的检测区域
 					int trackX = barMatch.rect.x;
@@ -1306,7 +1352,8 @@ void fishVrchat() {
 							<< " y=" << fixedTrackRoi.y
 							<< " w=" << fixedTrackRoi.width
 							<< " h=" << fixedTrackRoi.height
-							<< " (bar score=" << barMatch.score << ")";
+							<< " (bar score=" << barMatch.score
+							<< " scale=" << barScale << ")";
 						writeVrLogLine(oss.str(), config.vr_debug);
 					}
 				} else {

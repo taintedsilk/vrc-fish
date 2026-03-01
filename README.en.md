@@ -99,6 +99,7 @@ Key highlights:
 - Window matching: `window_class`, `window_title_contains`
 - Resolution: `force_resolution`, `target_width`, `target_height`
 - Thresholds: `bite_threshold`, `minigame_threshold`, `fish_icon_threshold`, `slider_threshold`
+- Multi-scale template matching: `fish_scale_*` (fish icons), `track_scale_*` (minigame track)
 - Cleanup loop: `cleanup_*`, `cleanup_reel_key`
 - ML: `ml_mode` (0=auto, 1=record, 2=infer), `ml_record_csv`, `ml_weights_file`
 - Debug/log: `debug`, `debug_pic`, `debug_dir`, `vr_log_file`
