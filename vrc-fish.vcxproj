@@ -162,8 +162,6 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="vrc-fish.ico" />
-    <Image Include="Resource\template.png" />
-    <Image Include="Resource\tpl.png" />
   </ItemGroup>
   <ItemGroup>
     <None Include="config.ini" />
