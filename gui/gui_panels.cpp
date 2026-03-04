@@ -203,6 +203,9 @@ static void RenderConfigEditor() {
 			config.force_resolution = forceRes ? 1 : 0;
 		ImGui::InputInt(T("cfg_target_w"), &config.target_width);
 		ImGui::InputInt(T("cfg_target_h"), &config.target_height);
+		ImGui::Separator();
+		ImGui::Checkbox(T("cfg_background_input"), &config.background_input);
+		ImGui::TextDisabled("%s", T("cfg_background_hint"));
 	}
 
 	// === Timing ===

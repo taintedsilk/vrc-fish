@@ -9,6 +9,7 @@ struct g_config {
 	std::string window_class;
 	std::string window_title_contains;
 	int force_resolution;
+	bool background_input;
 	int target_width;
 	int target_height;
 	int capture_interval_ms;

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-03-04
+
+### Added
+- Background Input mode (PostMessage): fish without losing mouse/keyboard control
+- Auto-create config.ini with defaults when the file is missing
+
 ## [2.0.0] - 2026-03-04
 
 ### Added

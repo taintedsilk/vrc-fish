@@ -86,6 +86,8 @@ static void waitWhilePaused(int sleepMs = 1000) {
 	}
 }
 
+void saveConfigToIni(); // forward declaration
+
 // 读取配置文件
 void loadConfig() {
 	ZIni ini("config.ini");
@@ -94,6 +96,7 @@ void loadConfig() {
 	config.window_class = ini.get("vrchat_fish", "window_class", "UnityWndClass");
 	config.window_title_contains = ini.get("vrchat_fish", "window_title_contains", "VRChat");
 	config.force_resolution = ini.getInt("vrchat_fish", "force_resolution", 1);
+	config.background_input = ini.getInt("vrchat_fish", "background_input", 0) != 0;
 	config.target_width = ini.getInt("vrchat_fish", "target_width", 1280);
 	config.target_height = ini.getInt("vrchat_fish", "target_height", 960);
 	config.capture_interval_ms = ini.getInt("vrchat_fish", "capture_interval_ms", 80);
@@ -203,6 +206,17 @@ void loadConfig() {
 		LOG_INFO("[ML] Record mode enabled, CSV: %s", config.ml_record_csv.c_str());
 	} else if (config.ml_mode == 2) {
 		LOG_INFO("[ML] Inference mode enabled, weights: %s", config.ml_weights_file.c_str());
+	}
+
+	// Create config.ini with defaults if it doesn't exist
+	if (GetFileAttributesA("config.ini") == INVALID_FILE_ATTRIBUTES) {
+		LOG_INFO("config.ini not found, creating with defaults");
+		// ZIni requires an existing file to write, so create an empty seed
+		FILE* fp = fopen("config.ini", "w");
+		if (fp) {
+			fclose(fp);
+			saveConfigToIni();
+		}
 	}
 }
 
@@ -578,6 +592,7 @@ void saveConfigToIni() {
 	setStr("vrchat_fish", "window_class", config.window_class);
 	setStr("vrchat_fish", "window_title_contains", config.window_title_contains);
 	setInt("vrchat_fish", "force_resolution", config.force_resolution);
+	setInt("vrchat_fish", "background_input", config.background_input ? 1 : 0);
 	setInt("vrchat_fish", "target_width", config.target_width);
 	setInt("vrchat_fish", "target_height", config.target_height);
 	setInt("vrchat_fish", "capture_interval_ms", config.capture_interval_ms);
@@ -1266,12 +1281,11 @@ static TplMatch matchBestRoiTrackBarAutoScale(
 	return best;
 }
 
+// --- Window activation (foreground mode only) ---
 static void activateGameWindowInner(bool forceCursorCenter) {
+	if (config.background_input) return;
 	HWND hwnd = params.hwnd;
-	if (!hwnd) {
-		return;
-	}
-	// Only restore if minimized — SW_RESTORE on a maximized window shrinks it
+	if (!hwnd) return;
 	if (IsIconic(hwnd)) {
 		ShowWindow(hwnd, SW_RESTORE);
 	}
@@ -1288,8 +1302,6 @@ static void activateGameWindowInner(bool forceCursorCenter) {
 			}
 		}
 	}
-
-	// SendInput 会在"当前鼠标指针所在窗口"分发消息；如果鼠标在窗口外会导致点击无效
 	RECT r = params.rect;
 	if (r.right > r.left && r.bottom > r.top) {
 		POINT p{};
@@ -1305,6 +1317,16 @@ static void activateGameWindow() {
 	activateGameWindowInner(false);
 }
 
+// --- Helper: get client center as LPARAM for PostMessage ---
+static LPARAM getClientCenterLParam() {
+	HWND hwnd = params.hwnd;
+	if (!hwnd) return MAKELPARAM(0, 0);
+	RECT cr;
+	GetClientRect(hwnd, &cr);
+	return MAKELPARAM((cr.right - cr.left) / 2, (cr.bottom - cr.top) / 2);
+}
+
+// --- Mouse / keyboard input ---
 static void sendMouseLeftRaw(DWORD flags, const char* phaseTag) {
 	INPUT input{};
 	input.type = INPUT_MOUSE;
@@ -1316,16 +1338,35 @@ static void sendMouseLeftRaw(DWORD flags, const char* phaseTag) {
 }
 
 static void mouseLeftDown() {
+	if (config.background_input) {
+		HWND hwnd = params.hwnd;
+		if (hwnd) PostMessage(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, getClientCenterLParam());
+		return;
+	}
 	activateGameWindow();
 	sendMouseLeftRaw(MOUSEEVENTF_LEFTDOWN, "leftdown");
 }
 
 static void mouseLeftUp() {
+	if (config.background_input) {
+		HWND hwnd = params.hwnd;
+		if (hwnd) PostMessage(hwnd, WM_LBUTTONUP, 0, getClientCenterLParam());
+		return;
+	}
 	activateGameWindow();
 	sendMouseLeftRaw(MOUSEEVENTF_LEFTUP, "leftup");
 }
 
 static void mouseLeftClickCentered(int delayMs = 40) {
+	if (config.background_input) {
+		HWND hwnd = params.hwnd;
+		if (!hwnd) return;
+		LPARAM lp = getClientCenterLParam();
+		PostMessage(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+		Sleep(delayMs);
+		PostMessage(hwnd, WM_LBUTTONUP, 0, lp);
+		return;
+	}
 	activateGameWindowInner(true);
 	sendMouseLeftRaw(MOUSEEVENTF_LEFTDOWN, "leftdown");
 	Sleep(delayMs);
@@ -1333,7 +1374,9 @@ static void mouseLeftClickCentered(int delayMs = 40) {
 }
 
 static void mouseMoveRelative(int dx, int dy, const char* phaseTag) {
-	if (dx == 0 && dy == 0) {
+	if (dx == 0 && dy == 0) return;
+	if (config.background_input) {
+		// PostMessage mouse move not needed for cast offset in background mode
 		return;
 	}
 	activateGameWindow();
@@ -1349,6 +1392,17 @@ static void mouseMoveRelative(int dx, int dy, const char* phaseTag) {
 }
 
 static void keyTapVk(WORD vk, int delayMs = 30) {
+	if (config.background_input) {
+		HWND hwnd = params.hwnd;
+		if (!hwnd) return;
+		UINT scanCode = MapVirtualKey(vk, MAPVK_VK_TO_VSC);
+		LPARAM downLParam = (LPARAM)(1 | (scanCode << 16));
+		LPARAM upLParam   = (LPARAM)(1 | (scanCode << 16) | (1 << 30) | (1 << 31));
+		PostMessage(hwnd, WM_KEYDOWN, vk, downLParam);
+		Sleep(delayMs);
+		PostMessage(hwnd, WM_KEYUP, vk, upLParam);
+		return;
+	}
 	activateGameWindow();
 	INPUT input{};
 	input.type = INPUT_KEYBOARD;
