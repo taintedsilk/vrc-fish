@@ -20,12 +20,16 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
+      - name: Install VS 2026 C++ Build Tools (v145)
+        run: |
+          choco install visualstudio2026buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64" -y
+        shell: pwsh
+
       - name: Build Release x64
         run: |
           msbuild vrc-fish.sln `
             /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:PlatformToolset=v143
+            /p:Platform=x64
         shell: pwsh
 
       - name: Prepare release package
