@@ -140,8 +140,8 @@ bool isExist(Mat src, Mat tpl, double diff, bool debug) {
 	double d = compareFacesByHist(tpl, p.match);
 	double psnr = getPSNR(tpl, p.match);
 	if (debug) {
-		cout << "diff：" << d << endl;
-		cout << "psnr：" << psnr << endl;
+		LOG_DEBUG("diff: %f", d);
+		LOG_DEBUG("psnr: %f", psnr);
 	}
 	if (d < diff) {
 		return TRUE;
@@ -184,7 +184,7 @@ bool isMatMatch(Mat src, Mat tpl, int val, double diff, bool debug) {
 	double d = 1.0 - equalCount * 1.0 / src.rows / src.cols / dims;
 	//double d = compareFacesByHist(src, tpl);
 	if (debug) {
-		cout << "diff：" << d << endl;
+		LOG_DEBUG("diff: %f", d);
 	}
 	return d <= diff;
 }
@@ -193,7 +193,7 @@ bool isMatMatch(Mat src, Mat tpl, int val, double diff, bool debug) {
 void drawMat(Mat src, RECT rect) {
 	Point p1 = Point(rect.left, rect.top);
 	Point p2 = Point(rect.right, rect.bottom);
-	cout << p1 << "||" << p2 << endl;
+	LOG_DEBUG("drawMat: (%d,%d)||(%d,%d)", p1.x, p1.y, p2.x, p2.y);
 	rectangle(src, p1, p2, Scalar(0, 0, 255), 2, 8, 0);
 }
 
@@ -207,7 +207,7 @@ Mat getMatByRect(Mat src, RECT rect) {
 // 打印Mat的通道数量、像素
 void printMat(Mat src) {
 	int dims = src.channels();//image的通道
-	cout << "dims：" << dims << endl;
+	LOG_DEBUG("dims: %d", dims);
 	int h = src.rows; //image的行
 	int w = src.cols; //image的列
 	for (int row = 0; row < h; row++) //遍历image的所有行
@@ -218,7 +218,7 @@ void printMat(Mat src) {
 			{
 				int pv = src.at<uchar>(row, col);//得到行、列像素值
 				//src.at<uchar>(row, col) = 255 - pv;//给像素值重新赋值（与原来像素相反）
-				cout << pv << " | ";
+				// pixel output suppressed in GUI mode
 			}
 			if (dims == 3) //三通道的彩色图像
 			{
@@ -226,9 +226,9 @@ void printMat(Mat src) {
 				//src.at<Vec3b>(row, col)[0] = 255 - bgr[0];//代表image的第一通道
 				//src.at<Vec3b>(row, col)[1] = 255 - bgr[1];
 				//src.at<Vec3b>(row, col)[2] = 255 - bgr[2];//对彩色图像读取它的像素值，并且对像素值进行改写。
-				cout << (int)bgr[0] << "," << (int)bgr[1] << "," << (int)bgr[2] << " | ";
+				// pixel output suppressed in GUI mode
 			}
 		}
-		cout << endl;
+		// newline suppressed in GUI mode
 	}
 }

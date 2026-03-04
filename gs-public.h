@@ -1,4 +1,4 @@
-﻿using namespace std;
+using namespace std;
 
 // 字符串分割
 vector<string> split(const string& str, const string& pattern) {
@@ -44,9 +44,8 @@ string getRegValue(HKEY lpMainKey, LPCTSTR lpSubKey, LPCTSTR lpValueName) {
 	}
 	::RegCloseKey(hKey);
 	if (!bRet) {
-		cout << "读取注册表失败" << endl;
-		system("pause");
-		exit(0);
+		LOG_ERROR("Failed to read registry key");
+		return "";
 	}
 	return strReturn;
 }
@@ -61,7 +60,7 @@ DWORD getRegDwordValue(HKEY lpMainKey, LPCTSTR lpSubKey, LPCTSTR lpValueName) {
 	bool bRet = false;
 	long lRet;
 	HKEY hKey;
-	DWORD result;
+	DWORD result = 0;
 	DWORD dwType = REG_DWORD;
 	DWORD dwValue = MAX_PATH;
 	lRet = RegOpenKeyEx(lpMainKey, lpSubKey, 0, KEY_QUERY_VALUE, &hKey);
@@ -76,17 +75,9 @@ DWORD getRegDwordValue(HKEY lpMainKey, LPCTSTR lpSubKey, LPCTSTR lpValueName) {
 	}
 	RegCloseKey(hKey);//记住，一定要关闭
 	if (!bRet) {
-		cout << "读取注册表失败" << endl;
-		system("pause");
-		exit(0);
+		LOG_ERROR("Failed to read registry DWORD");
 	}
 	return result;
-}
-
-// 退出程序
-void exit() {
-	system("pause");
-	exit(0);
 }
 
 //获取时间戳函数（秒）
@@ -131,8 +122,8 @@ int getKeyVal(string s) {
 	else if (s.compare("space") == 0) return 32;
 	else if (s.compare("tab") == 0) return 9;
 	else {
-		std::cout << "键码识别错误：" + s;
-		exit(0);
-		system("pause");
+		LOG_ERROR("Key code recognition error: %s", s.c_str());
+		return 0;
 	}
+	return 0;
 }

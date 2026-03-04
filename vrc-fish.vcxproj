@@ -75,7 +75,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(ProjectDir)</OutDir>
     <IntDir>$(ProjectDir)obj\$(Configuration)\</IntDir>
-    <IncludePath>include;$(IncludePath)</IncludePath>
+    <IncludePath>include;imgui;imgui\backends;$(IncludePath)</IncludePath>
     <LibraryPath>lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -83,7 +83,7 @@
     <IntDir>$(ProjectDir)obj\$(Configuration)\</IntDir>
     <CopyLocalDeploymentContent>true</CopyLocalDeploymentContent>
     <CopyLocalProjectReference>true</CopyLocalProjectReference>
-    <IncludePath>include;$(IncludePath)</IncludePath>
+    <IncludePath>include;imgui;imgui\backends;$(IncludePath)</IncludePath>
     <LibraryPath>lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -118,14 +118,14 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/source-charset:gbk /execution-charset:gbk %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>opencv_core460.lib;opencv_imgproc460.lib;opencv_highgui460.lib;opencv_imgcodecs460.lib;opencv_objdetect460.lib;opencv_video460.lib;opencv_videoio460.lib;opencv_dnn460.lib;opencv_features2d460.lib;opencv_flann460.lib;opencv_calib3d460.lib;opencv_photo460.lib;opencv_stitching460.lib;opencv_ml460.lib;opencv_gapi460.lib;gdi32.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;comdlg32.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opencv_core460.lib;opencv_imgproc460.lib;opencv_highgui460.lib;opencv_imgcodecs460.lib;opencv_objdetect460.lib;opencv_video460.lib;opencv_videoio460.lib;opencv_dnn460.lib;opencv_features2d460.lib;opencv_flann460.lib;opencv_calib3d460.lib;opencv_photo460.lib;opencv_stitching460.lib;opencv_ml460.lib;opencv_gapi460.lib;d3d11.lib;d3dcompiler.lib;dxgi.lib;gdi32.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;comdlg32.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
       <AdditionalLibraryDirectories>$(ProjectDir)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
@@ -136,23 +136,31 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalOptions>/source-charset:gbk /execution-charset:gbk %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>opencv_core460.lib;opencv_imgproc460.lib;opencv_highgui460.lib;opencv_imgcodecs460.lib;opencv_objdetect460.lib;opencv_video460.lib;opencv_videoio460.lib;opencv_dnn460.lib;opencv_features2d460.lib;opencv_flann460.lib;opencv_calib3d460.lib;opencv_photo460.lib;opencv_stitching460.lib;opencv_ml460.lib;opencv_gapi460.lib;gdi32.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;comdlg32.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opencv_core460.lib;opencv_imgproc460.lib;opencv_highgui460.lib;opencv_imgcodecs460.lib;opencv_objdetect460.lib;opencv_video460.lib;opencv_videoio460.lib;opencv_dnn460.lib;opencv_features2d460.lib;opencv_flann460.lib;opencv_calib3d460.lib;opencv_photo460.lib;opencv_stitching460.lib;opencv_ml460.lib;opencv_gapi460.lib;d3d11.lib;d3dcompiler.lib;dxgi.lib;gdi32.lib;user32.lib;shell32.lib;ole32.lib;oleaut32.lib;advapi32.lib;comdlg32.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
       <AdditionalLibraryDirectories>$(ProjectDir)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="vrc-fish.cpp" />
+    <ClCompile Include="gui\gui_main.cpp" />
+    <ClCompile Include="gui\gui_panels.cpp" />
+    <ClCompile Include="imgui\imgui.cpp" />
+    <ClCompile Include="imgui\imgui_draw.cpp" />
+    <ClCompile Include="imgui\imgui_tables.cpp" />
+    <ClCompile Include="imgui\imgui_widgets.cpp" />
+    <ClCompile Include="imgui\backends\imgui_impl_dx11.cpp" />
+    <ClCompile Include="imgui\backends\imgui_impl_win32.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Ciclequeue.h" />
@@ -161,6 +169,10 @@
     <ClInclude Include="ini.h" />
     <ClInclude Include="gs-opencv.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="gui\gui_main.h" />
+    <ClInclude Include="gui\gui_panels.h" />
+    <ClInclude Include="gui\gui_logger.h" />
+    <ClInclude Include="gui\gui_state.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="vrc-fish.ico" />

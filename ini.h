@@ -320,7 +320,7 @@ inline bool ZIni::set(const char* mainKey, const char* subKey, const char* subVa
 			{
 				if (isSubKeyIndexValid(lineBeginIndex + strlen(subKey)))
 					break;
-				lineBeginIndex = filestring.find(subKey, lineBeginIndex);
+				lineBeginIndex = filestring.find(subKey, lineBeginIndex + 1);
 			}
 			auto lineEndIndex = filestring.find('\n', lineBeginIndex);
 			if (lineEndIndex != std::string::npos)    //did not reach the end-of-file
@@ -385,7 +385,7 @@ inline bool ZIni::remove(const char* mainKey, const char* subKey)
 			{
 				if (isSubKeyIndexValid(lineBeginIndex + strlen(subKey)))
 					break;
-				lineBeginIndex = filestring.find(subKey, lineBeginIndex);
+				lineBeginIndex = filestring.find(subKey, lineBeginIndex + 1);
 			}
 			auto lineEndIndex = filestring.find('\n', lineBeginIndex);
 			if (lineEndIndex != std::string::npos)    //did not reach the end-of-file
