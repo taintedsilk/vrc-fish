@@ -221,6 +221,9 @@ static void RenderConfigEditor() {
 			ImGui::TextDisabled("%s", T("cfg_autopull_hint"));
 		}
 		SliderMsAsSeconds(T("cfg_minigame_delay"), &config.minigame_enter_delay_ms, 0, 2000);
+		SliderMsAsSeconds(T("cfg_minigame_verify"), &config.minigame_verify_timeout_ms, 0, 10000);
+		if (config.minigame_verify_timeout_ms > 0)
+			ImGui::TextDisabled("%s", T("cfg_minigame_verify_hint"));
 		SliderMsAsSeconds(T("cfg_cleanup_wait_before"), &config.cleanup_wait_before_ms, 0, 5000);
 		ImGui::SliderInt(T("cfg_cleanup_clicks"), &config.cleanup_click_count, 0, 10);
 		SliderMsAsSeconds(T("cfg_cleanup_interval"), &config.cleanup_click_interval_ms, 0, 1000);

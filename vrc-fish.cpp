@@ -107,6 +107,7 @@ void loadConfig() {
 	config.bite_autopull = ini.getInt("vrchat_fish", "bite_autopull", 1);
 	config.bite_autopull_ms = ini.getInt("vrchat_fish", "bite_autopull_ms", 15000);
 	config.minigame_enter_delay_ms = ini.getInt("vrchat_fish", "minigame_enter_delay_ms", 0);
+	config.minigame_verify_timeout_ms = ini.getInt("vrchat_fish", "minigame_verify_timeout_ms", 3000);
 	config.cleanup_wait_before_ms = ini.getInt("vrchat_fish", "cleanup_wait_before_ms", 1500);
 	config.cleanup_click_count = ini.getInt("vrchat_fish", "cleanup_click_count", 1);
 	config.cleanup_click_interval_ms = ini.getInt("vrchat_fish", "cleanup_click_interval_ms", 150);
@@ -603,6 +604,7 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "bite_autopull", config.bite_autopull ? 1 : 0);
 	setInt("vrchat_fish", "bite_autopull_ms", config.bite_autopull_ms);
 	setInt("vrchat_fish", "minigame_enter_delay_ms", config.minigame_enter_delay_ms);
+	setInt("vrchat_fish", "minigame_verify_timeout_ms", config.minigame_verify_timeout_ms);
 	setInt("vrchat_fish", "cleanup_wait_before_ms", config.cleanup_wait_before_ms);
 	setInt("vrchat_fish", "cleanup_click_count", config.cleanup_click_count);
 	setInt("vrchat_fish", "cleanup_click_interval_ms", config.cleanup_click_interval_ms);
@@ -2205,11 +2207,54 @@ void fishVrchat() {
 			continue;
 		}
 
-		// 点击感叹号后默认进入小游戏：仅等待固定延迟，不做"是否进入小游戏"的模板确认
+		// After bite/autopull click: verify minigame UI actually appeared
 		if (state == VrFishState::EnterMinigame) {
+			// Wait for initial delay
 			if (nowMs() - stateStart < (unsigned long long)config.minigame_enter_delay_ms) {
 				Sleep(config.capture_interval_ms);
 				continue;
+			}
+			// Verify minigame bar appears within timeout
+			int verifyMs = config.minigame_verify_timeout_ms;
+			if (verifyMs > 0) {
+				unsigned long long verifyElapsed = nowMs() - stateStart;
+				if (verifyElapsed < (unsigned long long)(config.minigame_enter_delay_ms + verifyMs)) {
+					// Grab frame and check for minigame bar
+					Mat verifyFrame = getSrc(params.hwnd, params.rect);
+					Mat verifyGray;
+					if (verifyFrame.channels() > 1)
+						cvtColor(verifyFrame, verifyGray, COLOR_BGR2GRAY);
+					else
+						verifyGray = verifyFrame;
+					Rect verifyRoi = centerThirdStripRoi(verifyGray.size());
+					TplMatch barMatch = matchBestRoiTrackBarAutoScale(
+						verifyGray, params.tpl_vr_minigame_bar_full,
+						verifyRoi, TM_CCOEFF_NORMED, nullptr, nullptr);
+					if (config.vr_debug) {
+						LOG_DEBUG("[verify_minigame] bar score=%.3f threshold=%.3f",
+							barMatch.score, config.minigame_threshold);
+					}
+					if (barMatch.score >= config.minigame_threshold) {
+						LOG_INFO("[verify_minigame] minigame UI confirmed (score=%.3f)", barMatch.score);
+						// Fall through to init ControlMinigame below
+					} else {
+						// Update preview during verification
+						if (config.gui_preview_enabled) {
+							std::lock_guard<std::mutex> lock(g_fishStatus.frameMutex);
+							g_fishStatus.latestFrame = verifyFrame;
+							g_fishStatus.frameUpdated = true;
+						}
+						Sleep(config.capture_interval_ms);
+						continue; // Keep checking
+					}
+				} else {
+					// Verification timed out: minigame not found -> retract and recast
+					LOG_INFO("[verify_minigame] timeout %dms, no minigame UI -> retract and recast", verifyMs);
+					mouseLeftClickCentered(); // click to retract rod
+					Sleep(1000);
+					switchState(VrFishState::Cast);
+					continue;
+				}
 			}
 			minigameMissingFrames = 0;
 			hasPrevSlider = false;

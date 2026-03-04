@@ -20,6 +20,7 @@ struct g_config {
 	bool bite_autopull;
 	int bite_autopull_ms;
 	int minigame_enter_delay_ms;
+	int minigame_verify_timeout_ms;
 	int cleanup_wait_before_ms;
 	int cleanup_click_count;
 	int cleanup_click_interval_ms;

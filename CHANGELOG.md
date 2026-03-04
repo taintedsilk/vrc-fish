@@ -2,11 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.1.0] - 2026-03-04
+## [2.1.0] - 2026-03-05
 
 ### Added
 - Background Input mode (PostMessage): fish without losing mouse/keyboard control
 - Auto-create config.ini with defaults when the file is missing
+- Minigame verification: after hook/autopull click, verifies the minigame UI actually appeared; retracts and recasts if not (configurable timeout, default 3s)
+
+### Fixed
+- Rod not properly recasting after catching a fish (cleanup sequence leaving game in wrong state)
 
 ## [2.0.0] - 2026-03-04
 
