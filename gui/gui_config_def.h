@@ -109,6 +109,9 @@ struct g_config {
 	bool vr_log_enabled;
 	bool debug_console;
 
+	bool osc_head_shake;
+	int osc_shake_duration_ms;
+
 	bool gui_preview_enabled;
 	bool gui_preview_boxes;
 	std::string language;

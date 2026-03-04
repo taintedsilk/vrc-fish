@@ -1,4 +1,6 @@
 ﻿#include<iostream>
+#include<winsock2.h>
+#include<ws2tcpip.h>
 #include<windows.h>
 #include<opencv2/highgui.hpp>
 #include<opencv2/imgproc/imgproc.hpp>
@@ -27,6 +29,7 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "ws2_32.lib")
 using namespace std;
 using namespace cv;
 
@@ -96,7 +99,7 @@ void loadConfig() {
 	config.window_class = ini.get("vrchat_fish", "window_class", "UnityWndClass");
 	config.window_title_contains = ini.get("vrchat_fish", "window_title_contains", "VRChat");
 	config.force_resolution = ini.getInt("vrchat_fish", "force_resolution", 1);
-	config.background_input = ini.getInt("vrchat_fish", "background_input", 0) != 0;
+	config.background_input = ini.getInt("vrchat_fish", "background_input", 1) != 0;
 	config.target_width = ini.getInt("vrchat_fish", "target_width", 1280);
 	config.target_height = ini.getInt("vrchat_fish", "target_height", 960);
 	config.capture_interval_ms = ini.getInt("vrchat_fish", "capture_interval_ms", 20);
@@ -105,7 +108,7 @@ void loadConfig() {
 	config.cast_mouse_move_dy = ini.getInt("vrchat_fish", "cast_mouse_move_dy", 0);
 	config.bite_timeout_ms = ini.getInt("vrchat_fish", "bite_timeout_ms", 30000);
 	config.bite_autopull = ini.getInt("vrchat_fish", "bite_autopull", 1);
-	config.bite_autopull_ms = ini.getInt("vrchat_fish", "bite_autopull_ms", 15000);
+	config.bite_autopull_ms = ini.getInt("vrchat_fish", "bite_autopull_ms", 18000);
 	config.minigame_enter_delay_ms = ini.getInt("vrchat_fish", "minigame_enter_delay_ms", 0);
 	config.minigame_verify_timeout_ms = ini.getInt("vrchat_fish", "minigame_verify_timeout_ms", 3000);
 	config.cleanup_wait_before_ms = ini.getInt("vrchat_fish", "cleanup_wait_before_ms", 1500);
@@ -196,6 +199,8 @@ void loadConfig() {
 	config.vr_log_file = ini.get("vrchat_fish", "vr_log_file", "data/logs/log.csv");
 	config.vr_log_enabled = ini.getInt("vrchat_fish", "vr_log_enabled", 0);
 	config.debug_console = ini.getInt("vrchat_fish", "debug_console", 0);
+	config.osc_head_shake = ini.getInt("vrchat_fish", "osc_head_shake", 1) != 0;
+	config.osc_shake_duration_ms = ini.getInt("vrchat_fish", "osc_shake_duration_ms", 20);
 	config.gui_preview_enabled = ini.getInt("gui", "preview_enabled", 1);
 	config.gui_preview_boxes = ini.getInt("gui", "preview_boxes", 1);
 	config.language = ini.get("gui", "language", "en");
@@ -670,6 +675,8 @@ void saveConfigToIni() {
 	setStr("vrchat_fish", "vr_log_file", config.vr_log_file);
 	setInt("vrchat_fish", "vr_log_enabled", config.vr_log_enabled ? 1 : 0);
 	setInt("vrchat_fish", "debug_console", config.debug_console ? 1 : 0);
+	setInt("vrchat_fish", "osc_head_shake", config.osc_head_shake ? 1 : 0);
+	setInt("vrchat_fish", "osc_shake_duration_ms", config.osc_shake_duration_ms);
 	setInt("gui", "preview_enabled", config.gui_preview_enabled ? 1 : 0);
 	setInt("gui", "preview_boxes", config.gui_preview_boxes ? 1 : 0);
 	setStr("gui", "language", config.language);
@@ -1393,6 +1400,51 @@ static void mouseMoveRelative(int dx, int dy, const char* phaseTag) {
 	}
 }
 
+// ── OSC UDP sender (VRChat listens on 127.0.0.1:9000) ──
+
+static bool sendOscInt(const char* path, int value) {
+	// Build minimal OSC message: path (4-byte aligned) + ",i\0\0" + int32 big-endian
+	size_t pathLen = strlen(path) + 1; // include null
+	size_t pathPad = (4 - (pathLen % 4)) % 4;
+	size_t totalPathLen = pathLen + pathPad;
+	const char typeTag[] = ",i\0\0";
+	size_t msgLen = totalPathLen + 4 + 4; // path + type tag + int32
+
+	std::vector<char> buf(msgLen, 0);
+	memcpy(buf.data(), path, strlen(path));
+	memcpy(buf.data() + totalPathLen, typeTag, 4);
+	// Big-endian int32
+	uint32_t be = htonl((uint32_t)value);
+	memcpy(buf.data() + totalPathLen + 4, &be, 4);
+
+	SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sock == INVALID_SOCKET) return false;
+
+	sockaddr_in addr{};
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(9000);
+	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+	int sent = sendto(sock, buf.data(), (int)msgLen, 0, (sockaddr*)&addr, sizeof(addr));
+	closesocket(sock);
+	return sent > 0;
+}
+
+static void shakeHeadOSC() {
+	int durationMs = config.osc_shake_duration_ms;
+	if (durationMs <= 0) durationMs = 20;
+
+	sendOscInt("/input/LookRight", 1);
+	Sleep(durationMs);
+	sendOscInt("/input/LookRight", 0);
+	Sleep(50);
+
+	sendOscInt("/input/LookLeft", 1);
+	Sleep(durationMs);
+	sendOscInt("/input/LookLeft", 0);
+	Sleep(50);
+}
+
 static void keyTapVk(WORD vk, int delayMs = 30) {
 	if (config.background_input) {
 		HWND hwnd = params.hwnd;
@@ -1446,8 +1498,16 @@ static bool ensureDirExists(const std::string& dir) {
 
 static std::string makeDebugPath(const std::string& tag) {
 	std::string dir = config.vr_debug_dir.empty() ? "debug_vrchat" : config.vr_debug_dir;
+	// Make path absolute if relative (SHCreateDirectoryExA needs absolute paths)
+	if (dir.size() < 2 || (dir[1] != ':' && dir[0] != '\\')) {
+		char cwd[MAX_PATH];
+		if (GetCurrentDirectoryA(MAX_PATH, cwd)) {
+			dir = std::string(cwd) + "\\" + dir;
+		}
+	}
+	std::replace(dir.begin(), dir.end(), '/', '\\');
 	ensureDirExists(dir);
-	return dir + "/" + tag + "_" + std::to_string(GetTickCount64()) + ".png";
+	return dir + "\\" + tag + "_" + std::to_string(GetTickCount64()) + ".png";
 }
 
 static void saveDebugFrame(const Mat& bgr, const std::string& tag) {
@@ -1990,6 +2050,7 @@ void fishVrchat() {
 	unsigned long long lastCtrlLogMs = 0;
 	int prevSliderY = 0;
 	bool hasPrevSlider = false;
+	unsigned long long lastMovementMs = 0;  // last time slider or fish moved
 	double smoothVelocity = 0.0;   // EMA 平滑速度
 	int prevFishY = 0;             // 上一帧鱼 Y（用于 fishVel）
 	bool hasPrevFish = false;
@@ -2188,6 +2249,12 @@ void fishVrchat() {
 				castMouseMoveDx = 0;
 				castMouseMoveDy = 0;
 			}
+			if (config.osc_head_shake) {
+				shakeHeadOSC();
+				if (config.vr_debug) {
+					LOG_DEBUG("[vrchat_fish] OSC head shake before cast (duration=%dms)", config.osc_shake_duration_ms);
+				}
+			}
 			mouseLeftClickCentered();
 			if (config.cast_mouse_move_dx != 0 || config.cast_mouse_move_dy != 0) {
 				mouseMoveRelative(config.cast_mouse_move_dx, config.cast_mouse_move_dy, "cast_mouse_move");
@@ -2214,48 +2281,7 @@ void fishVrchat() {
 				Sleep(config.capture_interval_ms);
 				continue;
 			}
-			// Verify minigame bar appears within timeout
-			int verifyMs = config.minigame_verify_timeout_ms;
-			if (verifyMs > 0) {
-				unsigned long long verifyElapsed = nowMs() - stateStart;
-				if (verifyElapsed < (unsigned long long)(config.minigame_enter_delay_ms + verifyMs)) {
-					// Grab frame and check for minigame bar
-					Mat verifyFrame = getSrc(params.hwnd, params.rect);
-					Mat verifyGray;
-					if (verifyFrame.channels() > 1)
-						cvtColor(verifyFrame, verifyGray, COLOR_BGR2GRAY);
-					else
-						verifyGray = verifyFrame;
-					Rect verifyRoi = centerThirdStripRoi(verifyGray.size());
-					TplMatch barMatch = matchBestRoiTrackBarAutoScale(
-						verifyGray, params.tpl_vr_minigame_bar_full,
-						verifyRoi, TM_CCOEFF_NORMED, nullptr, nullptr);
-					if (config.vr_debug) {
-						LOG_DEBUG("[verify_minigame] bar score=%.3f threshold=%.3f",
-							barMatch.score, config.minigame_threshold);
-					}
-					if (barMatch.score >= config.minigame_threshold) {
-						LOG_INFO("[verify_minigame] minigame UI confirmed (score=%.3f)", barMatch.score);
-						// Fall through to init ControlMinigame below
-					} else {
-						// Update preview during verification
-						if (config.gui_preview_enabled) {
-							std::lock_guard<std::mutex> lock(g_fishStatus.frameMutex);
-							g_fishStatus.latestFrame = verifyFrame;
-							g_fishStatus.frameUpdated = true;
-						}
-						Sleep(config.capture_interval_ms);
-						continue; // Keep checking
-					}
-				} else {
-					// Verification timed out: minigame not found -> retract and recast
-					LOG_INFO("[verify_minigame] timeout %dms, no minigame UI -> retract and recast", verifyMs);
-					mouseLeftClickCentered(); // click to retract rod
-					Sleep(1000);
-					switchState(VrFishState::Cast);
-					continue;
-				}
-			}
+			// No separate verification — ControlMinigame handles it via track lock timeout
 			minigameMissingFrames = 0;
 			hasPrevSlider = false;
 			hasPrevFish = false;
@@ -2286,6 +2312,7 @@ void fishVrchat() {
 				}
 				LOG_INFO("[ML] Record mode: started, manually control slider");
 			}
+			lastMovementMs = 0;
 			switchState(VrFishState::ControlMinigame);
 			continue;
 		}
@@ -2457,6 +2484,17 @@ void fishVrchat() {
 							if (holding) { mouseLeftUp(); holding = false; }
 							saveDebugFrame(frame, "track_lock_timeout", searchRoi);
 							switchState(VrFishState::PostMinigame);
+						}
+						// Verify: if track not locked within verify timeout, retract and recast
+						if (!hasFixedTrack && config.minigame_verify_timeout_ms > 0) {
+							unsigned long long elapsed = nowMs() - stateStart;
+							if (elapsed >= (unsigned long long)config.minigame_verify_timeout_ms) {
+								LOG_INFO("[verify_minigame] timeout %dms, no track lock -> recast", config.minigame_verify_timeout_ms);
+								saveDebugFrame(frame, "verify_minigame_timeout");
+								if (holding) { mouseLeftUp(); holding = false; }
+								mouseLeftClickCentered(); // retract rod, then Cast will cast again
+								switchState(VrFishState::Cast);
+							}
 						}
 						sleepControlInterval();
 						continue;
@@ -2892,10 +2930,28 @@ void fishVrchat() {
 					}
 					}
 
+				// Track movement for static detection
+				if (hasPrevSlider || hasPrevFish) {
+					if (abs(sliderCY - prevSliderY) > 2 || abs(fishY - prevFishY) > 2) {
+						lastMovementMs = nowMs();
+					}
+				} else {
+					lastMovementMs = nowMs(); // first frame
+				}
+
 				prevSliderY = sliderCY;
 				hasPrevSlider = true;
 				prevFishY = fishY;
 				hasPrevFish = true;
+
+				// Static for 30s → false track lock, recast
+				if (lastMovementMs > 0 && (nowMs() - lastMovementMs) >= 30000) {
+					LOG_INFO("[ctrl] static detection for 30s -> recast");
+					saveDebugFrame(frame, "static_timeout", fixedTrackRoi);
+					if (holding) { mouseLeftUp(); holding = false; }
+					mouseLeftClickCentered();
+					switchState(VrFishState::Cast);
+				}
 			}
 
 			sleepControlInterval();
@@ -2921,6 +2977,10 @@ void fishVrchat() {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+	// Initialize WinSock for OSC UDP
+	WSADATA wsaData;
+	WSAStartup(MAKEWORD(2, 2), &wsaData);
+
 	// Load config
 	loadConfig();
 
@@ -2958,5 +3018,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 	}
 
 	CleanupGui();
+	WSACleanup();
 	return result;
 }

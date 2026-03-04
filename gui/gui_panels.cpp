@@ -214,6 +214,10 @@ static void RenderConfigEditor() {
 		SliderMsAsSeconds(T("cfg_cast_delay"), &config.cast_delay_ms, 0, 2000);
 		ImGui::InputInt(T("cfg_cast_dx"), &config.cast_mouse_move_dx);
 		ImGui::InputInt(T("cfg_cast_dy"), &config.cast_mouse_move_dy);
+		ImGui::Checkbox(T("cfg_osc_head_shake"), &config.osc_head_shake);
+		if (config.osc_head_shake) {
+			SliderMsAsSeconds(T("cfg_osc_shake_duration"), &config.osc_shake_duration_ms, 5, 200);
+		}
 		SliderMsAsSeconds(T("cfg_bite_timeout"), &config.bite_timeout_ms, 5000, 60000);
 		ImGui::Checkbox(T("cfg_autopull"), &config.bite_autopull);
 		if (config.bite_autopull) {
