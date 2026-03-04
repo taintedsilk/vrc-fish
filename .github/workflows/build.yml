@@ -41,6 +41,7 @@ jobs:
             -Destination $staging -Force
 
           Copy-Item .\Resource-VRChat -Destination $staging -Recurse -Force
+          Copy-Item .\lang -Destination $staging -Recurse -Force
         shell: pwsh
 
       - name: Create ZIP archive
