@@ -103,7 +103,7 @@ void loadConfig() {
 	config.cast_delay_ms = ini.getInt("vrchat_fish", "cast_delay_ms", 200);
 	config.cast_mouse_move_dx = ini.getInt("vrchat_fish", "cast_mouse_move_dx", 0);
 	config.cast_mouse_move_dy = ini.getInt("vrchat_fish", "cast_mouse_move_dy", 0);
-	config.bite_timeout_ms = ini.getInt("vrchat_fish", "bite_timeout_ms", 12000);
+	config.bite_timeout_ms = ini.getInt("vrchat_fish", "bite_timeout_ms", 20000);
 	config.bite_autopull = ini.getInt("vrchat_fish", "bite_autopull", 0);
 	config.bite_autopull_ms = ini.getInt("vrchat_fish", "bite_autopull_ms", 15000);
 	config.minigame_enter_delay_ms = ini.getInt("vrchat_fish", "minigame_enter_delay_ms", 150);
