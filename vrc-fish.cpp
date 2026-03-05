@@ -11,6 +11,7 @@
 #include <vector>
 #include <sstream>
 #include <deque>
+#include <random>
 #include <ShlObj.h>
 #include "ini.h"
 #include "gui/gui_logger.h"
@@ -104,8 +105,12 @@ void loadConfig() {
 	config.target_height = ini.getInt("vrchat_fish", "target_height", 960);
 	config.capture_interval_ms = ini.getInt("vrchat_fish", "capture_interval_ms", 20);
 	config.cast_delay_ms = ini.getInt("vrchat_fish", "cast_delay_ms", 200);
-	config.cast_mouse_move_dx = ini.getInt("vrchat_fish", "cast_mouse_move_dx", 10);
+	config.cast_mouse_move_dx = ini.getInt("vrchat_fish", "cast_mouse_move_dx", 20);
 	config.cast_mouse_move_dy = ini.getInt("vrchat_fish", "cast_mouse_move_dy", 0);
+	config.cast_mouse_move_random_range = ini.getInt("vrchat_fish", "cast_mouse_move_random_range", 5);
+	config.cast_mouse_move_delay_max = ini.getInt("vrchat_fish", "cast_mouse_move_delay_max", 1000);
+	config.cast_mouse_move_duration_ms = ini.getInt("vrchat_fish", "cast_mouse_move_duration_ms", 500);
+	config.cast_mouse_move_step_ms = ini.getInt("vrchat_fish", "cast_mouse_move_step_ms", 30);
 	config.bite_timeout_ms = ini.getInt("vrchat_fish", "bite_timeout_ms", 30000);
 	config.bite_autopull = ini.getInt("vrchat_fish", "bite_autopull", 1);
 	config.bite_autopull_ms = ini.getInt("vrchat_fish", "bite_autopull_ms", 18000);
@@ -605,6 +610,10 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "cast_delay_ms", config.cast_delay_ms);
 	setInt("vrchat_fish", "cast_mouse_move_dx", config.cast_mouse_move_dx);
 	setInt("vrchat_fish", "cast_mouse_move_dy", config.cast_mouse_move_dy);
+	setInt("vrchat_fish", "cast_mouse_move_random_range", config.cast_mouse_move_random_range);
+	setInt("vrchat_fish", "cast_mouse_move_delay_max", config.cast_mouse_move_delay_max);
+	setInt("vrchat_fish", "cast_mouse_move_duration_ms", config.cast_mouse_move_duration_ms);
+	setInt("vrchat_fish", "cast_mouse_move_step_ms", config.cast_mouse_move_step_ms);
 	setInt("vrchat_fish", "bite_timeout_ms", config.bite_timeout_ms);
 	setInt("vrchat_fish", "bite_autopull", config.bite_autopull ? 1 : 0);
 	setInt("vrchat_fish", "bite_autopull_ms", config.bite_autopull_ms);
@@ -2256,15 +2265,85 @@ void fishVrchat() {
 				}
 			}
 			mouseLeftClickCentered();
+
 			if (config.cast_mouse_move_dx != 0 || config.cast_mouse_move_dy != 0) {
-				mouseMoveRelative(config.cast_mouse_move_dx, config.cast_mouse_move_dy, "cast_mouse_move");
-				castMouseMoved = true;
-				castMouseMoveDx = config.cast_mouse_move_dx;
-				castMouseMoveDy = config.cast_mouse_move_dy;
+				// 1. Generate randomized final displacement
+				static std::random_device rd;
+				static std::mt19937 gen(rd());
+				int range = config.cast_mouse_move_random_range;
+				if (range < 0) {
+					range = 0;
+				}
+				std::uniform_int_distribution<> dist(-range, range);
+				int finalDx = config.cast_mouse_move_dx + dist(gen);
+				int finalDy = config.cast_mouse_move_dy + dist(gen);
+
+				// 2. Random delay before move
+				if (config.cast_mouse_move_delay_max > 0) {
+					std::uniform_int_distribution<> delayDist(0, config.cast_mouse_move_delay_max);
+					int delayMs = delayDist(gen);
+					sleepWithPause(delayMs);
+				}
+
+				// 3. Smooth movement (if duration configured)
+				int durationMs = config.cast_mouse_move_duration_ms;
+				int stepMs = config.cast_mouse_move_step_ms;
+				if (durationMs > 0 && stepMs > 0) {
+					int steps = (durationMs + stepMs - 1) / stepMs;
+					if (steps < 1) steps = 1;
+
+					int remainingDx = finalDx;
+					int remainingDy = finalDy;
+
+					for (int i = 0; i < steps; i++) {
+						int stepDx, stepDy;
+						if (i == steps - 1) {
+							stepDx = remainingDx;
+							stepDy = remainingDy;
+						}
+						else {
+							double ratio = (double)stepMs / durationMs;
+							stepDx = (int)(finalDx * ratio);
+							stepDy = (int)(finalDy * ratio);
+						}
+
+						if (stepDx != 0 || stepDy != 0) {
+							mouseMoveRelative(stepDx, stepDy, "cast_mouse_move_step");
+						}
+
+						remainingDx -= stepDx;
+						remainingDy -= stepDy;
+
+						if (i < steps - 1) {
+							sleepWithPause(stepMs);
+						}
+					}
+
+					castMouseMoved = true;
+					castMouseMoveDx = finalDx;
+					castMouseMoveDy = finalDy;
+				}
+				else {
+					// Instant move (original logic)
+					mouseMoveRelative(finalDx, finalDy, "cast_mouse_move");
+					castMouseMoved = true;
+					castMouseMoveDx = finalDx;
+					castMouseMoveDy = finalDy;
+				}
+
+				// 4. Log output
 				if (config.vr_debug || vrLogFile.is_open()) {
 					std::ostringstream oss;
-					oss << "[vrchat_fish] cast mouse move dx=" << castMouseMoveDx
-						<< " dy=" << castMouseMoveDy;
+					oss << "[vrchat_fish] cast mouse move dx=" << finalDx
+						<< " dy=" << finalDy
+						<< " (base: " << config.cast_mouse_move_dx
+						<< "," << config.cast_mouse_move_dy
+						<< " range=" << range
+						<< " delay=" << config.cast_mouse_move_delay_max << "ms";
+					if (durationMs > 0) {
+						oss << " smooth: dur=" << durationMs << "ms step=" << stepMs << "ms";
+					}
+					oss << ")";
 					writeVrLogLine(oss.str(), config.vr_debug);
 				}
 			}

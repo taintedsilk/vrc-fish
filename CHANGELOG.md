@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - 2026-03-05
+
+### Added
+- Randomized cast mouse movement with configurable offset range, random delay, and smooth multi-step movement (ported from upstream)
+- GUI controls and translations (EN/ZH/JA) for new cast movement settings
+
+### Changed
+- Cast mouse move DX default increased from 10 to 20
+
 ## [2.1.0] - 2026-03-05
 
 ### Added

@@ -16,6 +16,10 @@ struct g_config {
 	int cast_delay_ms;
 	int cast_mouse_move_dx;
 	int cast_mouse_move_dy;
+	int cast_mouse_move_random_range;
+	int cast_mouse_move_delay_max;
+	int cast_mouse_move_duration_ms;
+	int cast_mouse_move_step_ms;
 	int bite_timeout_ms;
 	bool bite_autopull;
 	int bite_autopull_ms;
