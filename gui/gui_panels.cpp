@@ -221,6 +221,9 @@ static void RenderConfigEditor() {
 		ImGui::Checkbox(T("cfg_osc_head_shake"), &config.osc_head_shake);
 		if (config.osc_head_shake) {
 			SliderMsAsSeconds(T("cfg_osc_shake_duration"), &config.osc_shake_duration_ms, 5, 200);
+			ImGui::InputInt(T("cfg_osc_after_fails"), &config.osc_shake_after_fails);
+			if (config.osc_shake_after_fails < 0) config.osc_shake_after_fails = 0;
+			SliderMsAsSeconds(T("cfg_osc_post_delay"), &config.osc_shake_post_delay_ms, 0, 3000);
 		}
 		SliderMsAsSeconds(T("cfg_bite_timeout"), &config.bite_timeout_ms, 5000, 60000);
 		ImGui::Checkbox(T("cfg_autopull"), &config.bite_autopull);
@@ -230,6 +233,7 @@ static void RenderConfigEditor() {
 		}
 		SliderMsAsSeconds(T("cfg_minigame_delay"), &config.minigame_enter_delay_ms, 0, 2000);
 		SliderMsAsSeconds(T("cfg_minigame_verify"), &config.minigame_verify_timeout_ms, 0, 10000);
+		SliderMsAsSeconds(T("cfg_recast_fail_delay"), &config.recast_fail_delay_ms, 0, 5000);
 		if (config.minigame_verify_timeout_ms > 0)
 			ImGui::TextDisabled("%s", T("cfg_minigame_verify_hint"));
 		SliderMsAsSeconds(T("cfg_cleanup_wait_before"), &config.cleanup_wait_before_ms, 0, 5000);

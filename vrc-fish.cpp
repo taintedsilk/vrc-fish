@@ -22,6 +22,16 @@
 #include "gui/gui_main.h"
 #include "gui/gui_panels.h"
 #include "gui/gui_lang.h"
+#include "core/types.h"
+#include "engine/template_store.h"
+#include "engine/matcher.h"
+#include "engine/detectors.h"
+#include "engine/debug_frame.h"
+#include "engine/ml_model.h"
+#include "infra/fs/path_utils.h"
+#include "infra/win/window_api.h"
+#include "infra/win/input_api.h"
+#include "runtime/params.h"
 #pragma comment(lib, "opencv_core460.lib")
 #pragma comment(lib, "opencv_imgproc460.lib")
 #pragma comment(lib, "opencv_imgcodecs460.lib")
@@ -42,30 +52,7 @@ static std::thread g_fishThread;
 #define KEY_PRESSED(VK_NONAME) ((GetAsyncKeyState(VK_NONAME) & 0x0001) ? 1:0) //如果为真，表示按下过
 #define KEY_PRESSING(VK_NONAME) ((GetAsyncKeyState(VK_NONAME) & 0x8000) ? 1:0)  //如果为真，表示正处于按下状态
 
-struct g_params {
-	struct GrayTpl {
-		Mat gray;
-		Mat mask;  // 非空时启用 masked matchTemplate
-		bool empty() const { return gray.empty(); }
-		int cols() const { return gray.cols; }
-		int rows() const { return gray.rows; }
-		Size size() const { return gray.size(); }
-	};
-
-	HWND hwnd{};
-	RECT rect{};
-	bool pause{};
-
-	GrayTpl tpl_vr_bite_excl_bottom;
-	GrayTpl tpl_vr_bite_excl_full;
-	GrayTpl tpl_vr_minigame_bar_full;
-	GrayTpl tpl_vr_fish_icon;
-	GrayTpl tpl_vr_fish_icon_alt;
-	GrayTpl tpl_vr_fish_icon_alt2;
-	std::vector<GrayTpl> tpl_vr_fish_icons;           // fish_icon + fish_icon_alt*.png（动态加载）
-	std::vector<std::string> tpl_vr_fish_icon_files;  // 与 tpl_vr_fish_icons 对应的文件名（用于日志/调试）
-	GrayTpl tpl_vr_player_slider;
-};
+// g_params struct defined in runtime/params.h
 
 // g_config struct defined in gui/gui_config_def.h
 #include "gui/gui_config_def.h"
@@ -116,6 +103,7 @@ void loadConfig() {
 	config.bite_autopull_ms = ini.getInt("vrchat_fish", "bite_autopull_ms", 18000);
 	config.minigame_enter_delay_ms = ini.getInt("vrchat_fish", "minigame_enter_delay_ms", 0);
 	config.minigame_verify_timeout_ms = ini.getInt("vrchat_fish", "minigame_verify_timeout_ms", 3000);
+	config.recast_fail_delay_ms = ini.getInt("vrchat_fish", "recast_fail_delay_ms", 1000);
 	config.cleanup_wait_before_ms = ini.getInt("vrchat_fish", "cleanup_wait_before_ms", 1500);
 	config.cleanup_click_count = ini.getInt("vrchat_fish", "cleanup_click_count", 1);
 	config.cleanup_click_interval_ms = ini.getInt("vrchat_fish", "cleanup_click_interval_ms", 150);
@@ -204,8 +192,10 @@ void loadConfig() {
 	config.vr_log_file = ini.get("vrchat_fish", "vr_log_file", "data/logs/log.csv");
 	config.vr_log_enabled = ini.getInt("vrchat_fish", "vr_log_enabled", 0);
 	config.debug_console = ini.getInt("vrchat_fish", "debug_console", 0);
-	config.osc_head_shake = ini.getInt("vrchat_fish", "osc_head_shake", 1) != 0;
+	config.osc_head_shake = ini.getInt("vrchat_fish", "osc_head_shake", 0) != 0;
 	config.osc_shake_duration_ms = ini.getInt("vrchat_fish", "osc_shake_duration_ms", 20);
+	config.osc_shake_after_fails = ini.getInt("vrchat_fish", "osc_shake_after_fails", 1);
+	config.osc_shake_post_delay_ms = ini.getInt("vrchat_fish", "osc_shake_post_delay_ms", 500);
 	config.gui_preview_enabled = ini.getInt("gui", "preview_enabled", 1);
 	config.gui_preview_boxes = ini.getInt("gui", "preview_boxes", 1);
 	config.language = ini.get("gui", "language", "en");
@@ -231,213 +221,12 @@ void loadConfig() {
 	}
 }
 
-static std::wstring toWStringSimple(const std::string& s) {
-	return std::wstring(s.begin(), s.end());
-}
+// Window finding: infra/win/window_api.h
+using infra::win::findWindowByClassAndTitleContains;
+using infra::fs::ensureDirExists;
 
-struct FindWindowCtx {
-	std::wstring className;
-	std::wstring titleContains;
-	HWND hwnd = nullptr;
-};
-
-static BOOL CALLBACK enumWindowsFindProc(HWND hwnd, LPARAM lParam) {
-	auto* ctx = reinterpret_cast<FindWindowCtx*>(lParam);
-	if (!IsWindowVisible(hwnd)) {
-		return TRUE;
-	}
-	if (!ctx->className.empty()) {
-		wchar_t cls[256]{};
-		GetClassNameW(hwnd, cls, 256);
-		if (ctx->className != cls) {
-			return TRUE;
-		}
-	}
-	if (!ctx->titleContains.empty()) {
-		wchar_t title[512]{};
-		GetWindowTextW(hwnd, title, 512);
-		std::wstring t = title;
-		if (t.find(ctx->titleContains) == std::wstring::npos) {
-			return TRUE;
-		}
-	}
-	ctx->hwnd = hwnd;
-	return FALSE;
-}
-
-HWND findWindowByClassAndTitleContains(const std::string& windowClass, const std::string& titleContains) {
-	FindWindowCtx ctx{};
-	ctx.className = toWStringSimple(windowClass);
-	ctx.titleContains = toWStringSimple(titleContains);
-	EnumWindows(enumWindowsFindProc, reinterpret_cast<LPARAM>(&ctx));
-	return ctx.hwnd;
-}
-
-g_params::GrayTpl loadGrayTplFromFile(const std::string& path) {
-	Mat raw = imread(path, IMREAD_UNCHANGED);  // 保留 alpha 通道
-	if (raw.empty()) {
-		LOG_ERROR("Template load failed: %s", path.c_str());
-		return g_params::GrayTpl{};
-	}
-	g_params::GrayTpl tpl{};
-	if (raw.channels() == 4) {
-		// 分离 alpha 通道作为 mask
-		std::vector<Mat> channels;
-		split(raw, channels);
-		Mat alpha = channels[3];
-		// 如果 alpha 不全是 255，说明有透明区域，启用 mask
-		double minA = 0, maxA = 0;
-		minMaxLoc(alpha, &minA, &maxA);
-		Mat bgr;
-		cvtColor(raw, bgr, COLOR_BGRA2BGR);
-		cvtColor(bgr, tpl.gray, COLOR_BGR2GRAY);
-		if (minA < 255.0) {
-			// 二值化 mask：alpha > 0 -> 255, 否则 0
-			threshold(alpha, tpl.mask, 0, 255, THRESH_BINARY);
-			LOG_INFO("Template loaded (with mask): %s", path.c_str());
-		} else {
-			LOG_INFO("Template loaded: %s", path.c_str());
-		}
-	} else {
-		Mat bgr = raw;
-		if (raw.channels() == 1) {
-			tpl.gray = raw;
-		} else {
-			cvtColor(bgr, tpl.gray, COLOR_BGR2GRAY);
-		}
-		LOG_INFO("Template loaded: %s", path.c_str());
-	}
-	return tpl;
-}
-
-static g_params::GrayTpl tryLoadGrayTplFromFile(const std::string& path) {
-	Mat raw = imread(path, IMREAD_UNCHANGED);  // 保留 alpha 通道
-	if (raw.empty()) {
-		LOG_WARN("Template load failed (ignored): %s", path.c_str());
-		return g_params::GrayTpl{};
-	}
-	g_params::GrayTpl tpl{};
-	if (raw.channels() == 4) {
-		// 分离 alpha 通道作为 mask
-		std::vector<Mat> channels;
-		split(raw, channels);
-		Mat alpha = channels[3];
-		// 如果 alpha 不全是 255，说明有透明区域，启用 mask
-		double minA = 0, maxA = 0;
-		minMaxLoc(alpha, &minA, &maxA);
-		Mat bgr;
-		cvtColor(raw, bgr, COLOR_BGRA2BGR);
-		cvtColor(bgr, tpl.gray, COLOR_BGR2GRAY);
-		if (minA < 255.0) {
-			// 二值化 mask：alpha > 0 -> 255, 否则 0
-			threshold(alpha, tpl.mask, 0, 255, THRESH_BINARY);
-			LOG_INFO("Template loaded (with mask): %s", path.c_str());
-		} else {
-			LOG_INFO("Template loaded: %s", path.c_str());
-		}
-	} else {
-		Mat bgr = raw;
-		if (raw.channels() == 1) {
-			tpl.gray = raw;
-		} else {
-			cvtColor(bgr, tpl.gray, COLOR_BGR2GRAY);
-		}
-		LOG_INFO("Template loaded: %s", path.c_str());
-	}
-	return tpl;
-}
-
-static std::string joinPath(const std::string& dir, const std::string& file) {
-	if (dir.empty()) {
-		return file;
-	}
-	char last = dir.back();
-	if (last == '\\' || last == '/') {
-		return dir + file;
-	}
-	return dir + "\\" + file;
-}
-
-static std::string toLowerAscii(std::string s) {
-	for (char& c : s) {
-		if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-	}
-	return s;
-}
-
-static bool isFishAltIconFilename(const std::string& file) {
-	std::string f = toLowerAscii(file);
-	const std::string prefix = "fish_icon_alt";
-	const std::string suffix = ".png";
-	if (f.size() < prefix.size() + suffix.size()) return false;
-	if (f.rfind(prefix, 0) != 0) return false; // must start with prefix
-	if (f.compare(f.size() - suffix.size(), suffix.size(), suffix) != 0) return false; // must end with .png
-	std::string mid = f.substr(prefix.size(), f.size() - prefix.size() - suffix.size());
-	if (mid.empty()) return true; // fish_icon_alt.png
-	for (char c : mid) {
-		if (c < '0' || c > '9') return false;
-	}
-	return true; // fish_icon_alt123.png
-}
-
-static int parseFishAltIconIndex(const std::string& file) {
-	std::string f = toLowerAscii(file);
-	const std::string prefix = "fish_icon_alt";
-	const std::string suffix = ".png";
-	if (!isFishAltIconFilename(file)) return -1;
-	std::string mid = f.substr(prefix.size(), f.size() - prefix.size() - suffix.size());
-	if (mid.empty()) return -1;
-	int v = 0;
-	for (char c : mid) {
-		if (c < '0' || c > '9') return -1;
-		int d = (int)(c - '0');
-		if (v > 100000000) return -1; // 防溢出/异常文件名
-		v = v * 10 + d;
-	}
-	return v;
-}
-
-static std::vector<std::string> listFilesByWildcard(const std::string& dir, const std::string& wildcard) {
-	std::vector<std::string> out;
-	std::string query = joinPath(dir, wildcard);
-	WIN32_FIND_DATAA ffd{};
-	HANDLE hFind = FindFirstFileA(query.c_str(), &ffd);
-	if (hFind == INVALID_HANDLE_VALUE) {
-		return out;
-	}
-	do {
-		if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-			continue;
-		}
-		if (ffd.cFileName[0] == '\0') {
-			continue;
-		}
-		out.emplace_back(ffd.cFileName);
-	} while (FindNextFileA(hFind, &ffd));
-	FindClose(hFind);
-
-	// 排序：fish_icon_alt.png（无数字）最前，其余按数字升序，最后按字典序兜底
-	std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
-		bool aOk = isFishAltIconFilename(a);
-		bool bOk = isFishAltIconFilename(b);
-		if (aOk != bOk) return aOk; // 合法命名优先
-		if (!aOk) return toLowerAscii(a) < toLowerAscii(b);
-		int ai = parseFishAltIconIndex(a);
-		int bi = parseFishAltIconIndex(b);
-		if (ai != bi) {
-			// -1（无数字）排前面
-			if (ai < 0) return true;
-			if (bi < 0) return false;
-			return ai < bi;
-		}
-		return toLowerAscii(a) < toLowerAscii(b);
-	});
-	out.erase(std::unique(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
-		return toLowerAscii(a) == toLowerAscii(b);
-	}), out.end());
-
-	return out;
-}
+// Template loading: engine/template_store.h
+// File path utilities: infra/fs/path_utils.h
 
 // 窗口区域初始化
 void initRect() {
@@ -503,52 +292,19 @@ bool connectWindow() {
 	return true;
 }
 
-// 加载模板资源
+// Load template resources via extracted template_store module
 bool loadTemplates() {
-
-	params.tpl_vr_bite_excl_bottom = loadGrayTplFromFile(joinPath(config.resource_dir, config.tpl_bite_exclamation_bottom));
-	params.tpl_vr_bite_excl_full = loadGrayTplFromFile(joinPath(config.resource_dir, config.tpl_bite_exclamation_full));
-	params.tpl_vr_minigame_bar_full = loadGrayTplFromFile(joinPath(config.resource_dir, config.tpl_minigame_bar_full));
-	params.tpl_vr_player_slider = loadGrayTplFromFile(joinPath(config.resource_dir, config.tpl_player_slider));
-
-	// 鱼图标模板：fish_icon + fish_icon_alt*.png（支持 fish_icon_alt3.png / fish_icon_alt10.png ...）
-	params.tpl_vr_fish_icons.clear();
-	params.tpl_vr_fish_icon_files.clear();
-	std::vector<std::string> seenFishFilesLower;
-	auto addFishTplFile = [&](const std::string& file, bool required, g_params::GrayTpl* legacyOut) {
-		if (file.empty()) return;
-		std::string key = toLowerAscii(file);
-		if (std::find(seenFishFilesLower.begin(), seenFishFilesLower.end(), key) != seenFishFilesLower.end()) {
-			return;
-		}
-		g_params::GrayTpl tpl = required
-			? loadGrayTplFromFile(joinPath(config.resource_dir, file))
-			: tryLoadGrayTplFromFile(joinPath(config.resource_dir, file));
-		if (tpl.empty()) {
-			return; // optional failed
-		}
-		seenFishFilesLower.push_back(key);
-		if (legacyOut) *legacyOut = tpl;
-		params.tpl_vr_fish_icons.push_back(tpl);
-		params.tpl_vr_fish_icon_files.push_back(file);
-	};
-
-	// 主模板：必须存在
-	addFishTplFile(config.tpl_fish_icon, true, &params.tpl_vr_fish_icon);
-	// 兼容旧配置：可选
-	addFishTplFile(config.tpl_fish_icon_alt, false, &params.tpl_vr_fish_icon_alt);
-	addFishTplFile(config.tpl_fish_icon_alt2, false, &params.tpl_vr_fish_icon_alt2);
-	// 自动扫描目录：fish_icon_alt数字.png / fish_icon_alt.png
-	for (const std::string& f : listFilesByWildcard(config.resource_dir, "fish_icon_alt*.png")) {
-		if (!isFishAltIconFilename(f)) continue;
-		addFishTplFile(f, false, nullptr);
-	}
-
-	if (params.tpl_vr_fish_icons.empty()) {
-		LOG_ERROR("No fish icon templates loaded. Check Resource-VRChat/ and tpl_fish_icon config.");
-		return false;
-	}
-	LOG_INFO("Templates loaded: %zu fish icons", params.tpl_vr_fish_icons.size());
+	TemplateStore store;
+	if (!loadTemplateStore(store)) return false;
+	params.tpl_vr_bite_excl_bottom = store.biteExclBottom;
+	params.tpl_vr_bite_excl_full = store.biteExclFull;
+	params.tpl_vr_minigame_bar_full = store.minigameBarFull;
+	params.tpl_vr_fish_icon = store.fishIcon;
+	params.tpl_vr_fish_icon_alt = store.fishIconAlt;
+	params.tpl_vr_fish_icon_alt2 = store.fishIconAlt2;
+	params.tpl_vr_fish_icons = store.fishIcons;
+	params.tpl_vr_fish_icon_files = store.fishIconFiles;
+	params.tpl_vr_player_slider = store.playerSlider;
 	return true;
 }
 
@@ -619,6 +375,7 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "bite_autopull_ms", config.bite_autopull_ms);
 	setInt("vrchat_fish", "minigame_enter_delay_ms", config.minigame_enter_delay_ms);
 	setInt("vrchat_fish", "minigame_verify_timeout_ms", config.minigame_verify_timeout_ms);
+	setInt("vrchat_fish", "recast_fail_delay_ms", config.recast_fail_delay_ms);
 	setInt("vrchat_fish", "cleanup_wait_before_ms", config.cleanup_wait_before_ms);
 	setInt("vrchat_fish", "cleanup_click_count", config.cleanup_click_count);
 	setInt("vrchat_fish", "cleanup_click_interval_ms", config.cleanup_click_interval_ms);
@@ -686,6 +443,8 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "debug_console", config.debug_console ? 1 : 0);
 	setInt("vrchat_fish", "osc_head_shake", config.osc_head_shake ? 1 : 0);
 	setInt("vrchat_fish", "osc_shake_duration_ms", config.osc_shake_duration_ms);
+	setInt("vrchat_fish", "osc_shake_after_fails", config.osc_shake_after_fails);
+	setInt("vrchat_fish", "osc_shake_post_delay_ms", config.osc_shake_post_delay_ms);
 	setInt("gui", "preview_enabled", config.gui_preview_enabled ? 1 : 0);
 	setInt("gui", "preview_boxes", config.gui_preview_boxes ? 1 : 0);
 	setStr("gui", "language", config.language);
@@ -694,1356 +453,25 @@ void saveConfigToIni() {
 	LOG_INFO("Config saved to config.ini");
 }
 
-struct TplMatch {
-	Point topLeft{};
-	Point center{};
-	Rect rect{};
-	double score = 0.0;
-};
+// TplMatch struct defined in core/types.h
 
-static Rect clampRect(Rect r, const Size& bounds) {
-	if (r.x < 0) {
-		r.width += r.x;
-		r.x = 0;
-	}
-	if (r.y < 0) {
-		r.height += r.y;
-		r.y = 0;
-	}
-	if (r.x + r.width > bounds.width) {
-		r.width = bounds.width - r.x;
-	}
-	if (r.y + r.height > bounds.height) {
-		r.height = bounds.height - r.y;
-	}
-	if (r.width < 0) r.width = 0;
-	if (r.height < 0) r.height = 0;
-	return r;
-}
+// Template matching: engine/matcher.h
 
-static Rect centerThirdStripRoi(const Size& bounds) {
-	int w = bounds.width;
-	int h = bounds.height;
-	int x1 = w / 3;
-	int x2 = (w * 2) / 3;
-	return clampRect(Rect(x1, 0, x2 - x1, h), bounds);
-}
+// Input functions: infra/win/input_api.h
 
-TplMatch matchBest(const Mat& srcGray, const g_params::GrayTpl& tpl, int defaultMethod = TM_CCOEFF_NORMED) {
-	TplMatch out{};
-	const Mat& tplGray = tpl.gray;
-	if (srcGray.empty() || tplGray.empty()) {
-		return out;
-	}
-	if (srcGray.cols < tplGray.cols || srcGray.rows < tplGray.rows) {
-		return out;
-	}
-	Mat result;
-	int method = defaultMethod;
-	if (!tpl.mask.empty()) {
-		matchTemplate(srcGray, tplGray, result, method, tpl.mask);
-	} else {
-		matchTemplate(srcGray, tplGray, result, method);
-	}
-	double minVal = 0.0, maxVal = 0.0;
-	Point minLoc{}, maxLoc{};
-	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
-	Point bestLoc = maxLoc;
-	double score = maxVal;
-	if (method == TM_SQDIFF || method == TM_SQDIFF_NORMED) {
-		bestLoc = minLoc;
-		score = 1.0 - minVal;
-	}
-	if (!std::isfinite(score)) {
-		score = 0.0;
-	}
-	out.topLeft = bestLoc;
-	out.rect = Rect(bestLoc.x, bestLoc.y, tplGray.cols, tplGray.rows);
-	out.center = Point(bestLoc.x + tplGray.cols / 2, bestLoc.y + tplGray.rows / 2);
-	out.score = score;
-	return out;
-}
+// Debug frame saving: engine/debug_frame.h
+// Path utilities: infra/fs/path_utils.h
 
-TplMatch matchBestRoi(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi, int method = TM_CCOEFF_NORMED) {
-	TplMatch out{};
-	if (srcGray.empty() || tpl.empty()) {
-		return out;
-	}
-	roi = clampRect(roi, srcGray.size());
-	if (roi.width < tpl.cols() || roi.height < tpl.rows()) {
-		return out;
-	}
-	Mat sub = srcGray(roi);
-	out = matchBest(sub, tpl, method);
-	out.topLeft += roi.tl();
-	out.center += roi.tl();
-	out.rect.x += roi.x;
-	out.rect.y += roi.y;
-	return out;
-}
-
-static TplMatch matchBestRoiMultiScaleByScales(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi,
-	const double* scales, int scaleCount, int method = TM_CCOEFF_NORMED, double* bestScaleOut = nullptr) {
-	TplMatch best{};
-	if (srcGray.empty() || tpl.empty()) return best;
-	roi = clampRect(roi, srcGray.size());
-	if (roi.width <= 0 || roi.height <= 0) return best;
-	Mat sub = srcGray(roi);
-
-	double bestScale = 1.0;
-	if (!scales || scaleCount <= 0) {
-		// fallback: single scale=1.0
-		g_params::GrayTpl scaled{};
-		scaled.gray = tpl.gray;
-		scaled.mask = tpl.mask;
-		if (sub.cols >= scaled.gray.cols && sub.rows >= scaled.gray.rows) {
-			TplMatch m = matchBest(sub, scaled, method);
-			best = m;
-			bestScale = 1.0;
-		}
-	} else {
-		for (int i = 0; i < scaleCount; i++) {
-			double s = scales[i];
-			if (!std::isfinite(s) || s <= 0.0) {
-				continue;
-			}
-			g_params::GrayTpl scaled{};
-			if (std::abs(s - 1.0) < 1e-6) {
-				scaled.gray = tpl.gray;
-				scaled.mask = tpl.mask;
-			} else {
-				int tw = std::max(1, (int)std::round(tpl.gray.cols * s));
-				int th = std::max(1, (int)std::round(tpl.gray.rows * s));
-				resize(tpl.gray, scaled.gray, Size(tw, th), 0, 0, INTER_AREA);
-				if (!tpl.mask.empty()) {
-					resize(tpl.mask, scaled.mask, Size(tw, th), 0, 0, INTER_NEAREST);
-				}
-			}
-			if (sub.cols < scaled.gray.cols || sub.rows < scaled.gray.rows) continue;
-			TplMatch m = matchBest(sub, scaled, method);
-			if (m.score > best.score) {
-				best = m;
-				bestScale = s;
-			}
-		}
-	}
-	// 坐标从 sub-ROI 空间偏移回原图空间
-	best.topLeft += roi.tl();
-	best.center += roi.tl();
-	best.rect.x += roi.x;
-	best.rect.y += roi.y;
-	if (bestScaleOut) *bestScaleOut = bestScale;
-	return best;
-}
-
-static TplMatch matchBestRoiMultiScale(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi, int method = TM_CCOEFF_NORMED, double* bestScaleOut = nullptr) {
-	const double fishScales[4] = {
-		config.fish_scale_1,
-		config.fish_scale_2,
-		config.fish_scale_3,
-		config.fish_scale_4
-	};
-	return matchBestRoiMultiScaleByScales(srcGray, tpl, roi, fishScales, 4, method, bestScaleOut);
-}
-
-// 单尺度模板匹配（用于控制循环的快速路径）
-static TplMatch matchBestRoiAtScale(const Mat& srcGray, const g_params::GrayTpl& tpl, Rect roi, double scale, int method = TM_CCOEFF_NORMED) {
-	TplMatch out{};
-	if (srcGray.empty() || tpl.empty()) return out;
-	roi = clampRect(roi, srcGray.size());
-	if (roi.width <= 0 || roi.height <= 0) return out;
-	Mat sub = srcGray(roi);
-
-	g_params::GrayTpl scaled{};
-	if (std::abs(scale - 1.0) < 1e-6) {
-		scaled.gray = tpl.gray;
-		scaled.mask = tpl.mask;
-	} else {
-		int tw = std::max(1, (int)std::round(tpl.gray.cols * scale));
-		int th = std::max(1, (int)std::round(tpl.gray.rows * scale));
-		resize(tpl.gray, scaled.gray, Size(tw, th), 0, 0, INTER_AREA);
-		if (!tpl.mask.empty()) {
-			resize(tpl.mask, scaled.mask, Size(tw, th), 0, 0, INTER_NEAREST);
-		}
-	}
-	if (sub.cols < scaled.gray.cols || sub.rows < scaled.gray.rows) return out;
-	out = matchBest(sub, scaled, method);
-	out.topLeft += roi.tl();
-	out.center += roi.tl();
-	out.rect.x += roi.x;
-	out.rect.y += roi.y;
-	return out;
-}
-
-static void sortUniqueScales(std::vector<double>& scales) {
-	std::sort(scales.begin(), scales.end());
-	std::vector<double> uniq;
-	uniq.reserve(scales.size());
-	for (double s : scales) {
-		if (!std::isfinite(s) || s <= 0.0) continue;
-		if (uniq.empty() || std::abs(uniq.back() - s) > 1e-6) {
-			uniq.push_back(s);
-		}
-	}
-	scales.swap(uniq);
-}
-
-static void sortUniqueAngles(std::vector<double>& angles) {
-	std::sort(angles.begin(), angles.end());
-	std::vector<double> uniq;
-	uniq.reserve(angles.size());
-	for (double a : angles) {
-		if (!std::isfinite(a)) continue;
-		if (uniq.empty() || std::abs(uniq.back() - a) > 1e-6) {
-			uniq.push_back(a);
-		}
-	}
-	angles.swap(uniq);
-}
-
-static std::vector<double> buildScaleRange(double minScale, double maxScale, double step, int maxCount = 128) {
-	std::vector<double> scales;
-	if (!std::isfinite(minScale) || !std::isfinite(maxScale) || !std::isfinite(step)) return scales;
-	if (step <= 0.0) return scales;
-	if (minScale > maxScale) std::swap(minScale, maxScale);
-	if (minScale <= 0.0 || maxScale <= 0.0) return scales;
-	if (maxCount < 2) maxCount = 2;
-
-	double span = maxScale - minScale;
-	int count = (int)std::floor(span / step + 1e-9) + 1;
-	if (count < 1) count = 1;
-	if (count > maxCount) {
-		// 防止极端配置导致卡死：自动放大步长，让总匹配次数受控
-		step = (span <= 0.0) ? step : (span / (double)(maxCount - 1));
-		count = maxCount;
-	}
-
-	scales.reserve(count + 1);
-	for (int i = 0; i < count; i++) {
-		double s = minScale + step * (double)i;
-		if (!std::isfinite(s) || s <= 0.0) continue;
-		scales.push_back(s);
-	}
-	// 强制包含 maxScale（避免浮点累加误差导致漏掉端点）
-	if (!scales.empty()) {
-		double last = scales.back();
-		if (std::abs(last - maxScale) > step * 0.25) {
-			scales.push_back(maxScale);
-		}
-	}
-	sortUniqueScales(scales);
-	return scales;
-}
-
-static std::vector<double> buildAngleRange(double minAngle, double maxAngle, double step, int maxCount = 256) {
-	std::vector<double> angles;
-	if (!std::isfinite(minAngle) || !std::isfinite(maxAngle) || !std::isfinite(step)) return angles;
-	if (step <= 0.0) return angles;
-	if (minAngle > maxAngle) std::swap(minAngle, maxAngle);
-	if (maxCount < 2) maxCount = 2;
-
-	double span = maxAngle - minAngle;
-	int count = (int)std::floor(span / step + 1e-9) + 1;
-	if (count < 1) count = 1;
-	if (count > maxCount) {
-		step = (span <= 0.0) ? step : (span / (double)(maxCount - 1));
-		count = maxCount;
-	}
-
-	angles.reserve(count + 1);
-	for (int i = 0; i < count; i++) {
-		double a = minAngle + step * (double)i;
-		if (!std::isfinite(a)) continue;
-		angles.push_back(a);
-	}
-	if (!angles.empty()) {
-		double last = angles.back();
-		if (std::abs(last - maxAngle) > step * 0.25) {
-			angles.push_back(maxAngle);
-		}
-	}
-	sortUniqueAngles(angles);
-	return angles;
-}
-
-static g_params::GrayTpl makeScaledTpl(const g_params::GrayTpl& tpl, double scale) {
-	g_params::GrayTpl scaled{};
-	if (tpl.empty()) return scaled;
-
-	if (!std::isfinite(scale) || scale <= 0.0 || std::abs(scale - 1.0) < 1e-6) {
-		scaled.gray = tpl.gray;
-		scaled.mask = tpl.mask;
-		return scaled;
-	}
-
-	int tw = std::max(1, (int)std::round(tpl.gray.cols * scale));
-	int th = std::max(1, (int)std::round(tpl.gray.rows * scale));
-	resize(tpl.gray, scaled.gray, Size(tw, th), 0, 0, INTER_AREA);
-	if (!tpl.mask.empty()) {
-		resize(tpl.mask, scaled.mask, Size(tw, th), 0, 0, INTER_NEAREST);
-	}
-	return scaled;
-}
-
-static g_params::GrayTpl rotateTplKeepAll(const g_params::GrayTpl& tpl, double angleDeg) {
-	g_params::GrayTpl out{};
-	if (tpl.empty()) return out;
-	if (!std::isfinite(angleDeg) || std::abs(angleDeg) < 1e-6) {
-		out.gray = tpl.gray;
-		out.mask = tpl.mask;
-		return out;
-	}
-
-	int w = tpl.gray.cols;
-	int h = tpl.gray.rows;
-	Point2f center((float)w / 2.0f, (float)h / 2.0f);
-
-	// 计算旋转后完整包围盒，避免裁剪
-	RotatedRect rr(center, Size2f((float)w, (float)h), (float)angleDeg);
-	Rect2f bbox = rr.boundingRect2f();
-	int outW = std::max(1, (int)std::ceil(bbox.width));
-	int outH = std::max(1, (int)std::ceil(bbox.height));
-
-	Mat M = getRotationMatrix2D(center, angleDeg, 1.0);
-	// 平移：让旋转后的图像位于输出画布中心
-	M.at<double>(0, 2) += (double)outW / 2.0 - center.x;
-	M.at<double>(1, 2) += (double)outH / 2.0 - center.y;
-
-	warpAffine(tpl.gray, out.gray, M, Size(outW, outH), INTER_LINEAR, BORDER_CONSTANT, Scalar(0));
-	if (!tpl.mask.empty()) {
-		warpAffine(tpl.mask, out.mask, M, Size(outW, outH), INTER_NEAREST, BORDER_CONSTANT, Scalar(0));
-	}
-	return out;
-}
-
-static TplMatch matchBestRoiAtScaleAndAngle(
-	const Mat& srcGray,
-	const g_params::GrayTpl& tpl,
-	Rect roi,
-	double scale,
-	double angleDeg,
-	int method = TM_CCOEFF_NORMED
-) {
-	if (!std::isfinite(scale) || scale <= 0.0) scale = 1.0;
-	if (!std::isfinite(angleDeg)) angleDeg = 0.0;
-	g_params::GrayTpl scaled = makeScaledTpl(tpl, scale);
-	g_params::GrayTpl rotated = rotateTplKeepAll(scaled, angleDeg);
-	return matchBestRoi(srcGray, rotated, roi, method);
-}
-
-struct ScaleMatch {
-	double scale = 1.0;
-	TplMatch match{};
-};
-
-static TplMatch matchBestRoiMultiScaleCoarseToFine(
-	const Mat& srcGray,
-	const g_params::GrayTpl& tpl,
-	Rect roi,
-	const std::vector<double>& coarseScales,
-	int refineTopK,
-	double refineRadius,
-	double refineStep,
-	int method = TM_CCOEFF_NORMED,
-	double* bestScaleOut = nullptr
-) {
-	TplMatch best{};
-	if (srcGray.empty() || tpl.empty()) return best;
-
-	// 粗尺度匹配
-	double bestScale = 1.0;
-	std::vector<ScaleMatch> coarseMatches;
-	coarseMatches.reserve(coarseScales.size());
-
-	double coarseMin = 0.0, coarseMax = 0.0;
-	bool hasCoarseMinMax = false;
-
-	for (double s : coarseScales) {
-		if (!std::isfinite(s) || s <= 0.0) continue;
-
-		if (!hasCoarseMinMax) {
-			coarseMin = coarseMax = s;
-			hasCoarseMinMax = true;
-		} else {
-			if (s < coarseMin) coarseMin = s;
-			if (s > coarseMax) coarseMax = s;
-		}
-
-		TplMatch m = matchBestRoiAtScale(srcGray, tpl, roi, s, method);
-		coarseMatches.push_back(ScaleMatch{ s, m });
-		if (m.score > best.score) {
-			best = m;
-			bestScale = s;
-		}
-	}
-
-	// 没有有效尺度：fallback 到 1.0
-	if (coarseMatches.empty()) {
-		best = matchBestRoiAtScale(srcGray, tpl, roi, 1.0, method);
-		bestScale = 1.0;
-		if (bestScaleOut) *bestScaleOut = bestScale;
-		return best;
-	}
-
-	// 细分：围绕粗匹配 topK 的尺度再扫一遍
-	if (refineTopK < 1) refineTopK = 0;
-	if (!std::isfinite(refineRadius) || refineRadius <= 0.0) refineTopK = 0;
-	if (!std::isfinite(refineStep) || refineStep <= 0.0) refineTopK = 0;
-	if (!hasCoarseMinMax || coarseMax <= 0.0 || coarseMin <= 0.0) refineTopK = 0;
-
-	if (refineTopK > 0) {
-		std::sort(coarseMatches.begin(), coarseMatches.end(), [](const ScaleMatch& a, const ScaleMatch& b) {
-			return a.match.score > b.match.score;
-		});
-
-		std::vector<double> refineScales;
-		refineScales.reserve((size_t)refineTopK * 16);
-
-		for (int i = 0; i < (int)coarseMatches.size() && i < refineTopK; i++) {
-			const ScaleMatch& cand = coarseMatches[(size_t)i];
-			if (cand.match.score <= 0.0) break;
-
-			double s1 = cand.scale - refineRadius;
-			double s2 = cand.scale + refineRadius;
-			if (s1 < coarseMin) s1 = coarseMin;
-			if (s2 > coarseMax) s2 = coarseMax;
-			if (s2 <= s1) continue;
-
-			std::vector<double> seg = buildScaleRange(s1, s2, refineStep, 96);
-			refineScales.insert(refineScales.end(), seg.begin(), seg.end());
-		}
-
-		sortUniqueScales(refineScales);
-
-		for (double s : refineScales) {
-			TplMatch m = matchBestRoiAtScale(srcGray, tpl, roi, s, method);
-			if (m.score > best.score) {
-				best = m;
-				bestScale = s;
-			}
-		}
-	}
-
-	if (bestScaleOut) *bestScaleOut = bestScale;
-	return best;
-}
-
-struct AngleMatch {
-	double angleDeg = 0.0;
-	TplMatch match{};
-};
-
-static TplMatch matchBestRoiMultiAngleAtScaleCoarseToFine(
-	const Mat& srcGray,
-	const g_params::GrayTpl& tpl,
-	Rect roi,
-	double scale,
-	const std::vector<double>& coarseAngles,
-	int refineTopK,
-	double refineRadius,
-	double refineStep,
-	int method = TM_CCOEFF_NORMED,
-	double* bestAngleOut = nullptr
-) {
-	TplMatch best{};
-	if (srcGray.empty() || tpl.empty()) return best;
-
-	g_params::GrayTpl scaledTpl = makeScaledTpl(tpl, scale);
-	if (scaledTpl.empty()) return best;
-
-	double bestAngle = 0.0;
-	std::vector<AngleMatch> coarseMatches;
-	coarseMatches.reserve(coarseAngles.size());
-
-	double coarseMin = 0.0, coarseMax = 0.0;
-	bool hasCoarseMinMax = false;
-
-	for (double a : coarseAngles) {
-		if (!std::isfinite(a)) continue;
-		if (!hasCoarseMinMax) {
-			coarseMin = coarseMax = a;
-			hasCoarseMinMax = true;
-		} else {
-			if (a < coarseMin) coarseMin = a;
-			if (a > coarseMax) coarseMax = a;
-		}
-
-		g_params::GrayTpl rotated = rotateTplKeepAll(scaledTpl, a);
-		TplMatch m = matchBestRoi(srcGray, rotated, roi, method);
-		coarseMatches.push_back(AngleMatch{ a, m });
-		if (m.score > best.score) {
-			best = m;
-			bestAngle = a;
-		}
-	}
-
-	if (coarseMatches.empty()) {
-		// fallback: angle=0
-		g_params::GrayTpl rotated = rotateTplKeepAll(scaledTpl, 0.0);
-		best = matchBestRoi(srcGray, rotated, roi, method);
-		bestAngle = 0.0;
-		if (bestAngleOut) *bestAngleOut = bestAngle;
-		return best;
-	}
-
-	if (refineTopK < 1) refineTopK = 0;
-	if (!std::isfinite(refineRadius) || refineRadius <= 0.0) refineTopK = 0;
-	if (!std::isfinite(refineStep) || refineStep <= 0.0) refineTopK = 0;
-	if (!hasCoarseMinMax) refineTopK = 0;
-
-	if (refineTopK > 0) {
-		std::sort(coarseMatches.begin(), coarseMatches.end(), [](const AngleMatch& a, const AngleMatch& b) {
-			return a.match.score > b.match.score;
-		});
-
-		std::vector<double> refineAngles;
-		refineAngles.reserve((size_t)refineTopK * 16);
-
-		for (int i = 0; i < (int)coarseMatches.size() && i < refineTopK; i++) {
-			const AngleMatch& cand = coarseMatches[(size_t)i];
-			if (cand.match.score <= 0.0) break;
-
-			double a1 = cand.angleDeg - refineRadius;
-			double a2 = cand.angleDeg + refineRadius;
-			if (a1 < coarseMin) a1 = coarseMin;
-			if (a2 > coarseMax) a2 = coarseMax;
-			if (a2 <= a1) continue;
-
-			std::vector<double> seg = buildAngleRange(a1, a2, refineStep, 128);
-			refineAngles.insert(refineAngles.end(), seg.begin(), seg.end());
-		}
-
-		sortUniqueAngles(refineAngles);
-
-		for (double a : refineAngles) {
-			g_params::GrayTpl rotated = rotateTplKeepAll(scaledTpl, a);
-			TplMatch m = matchBestRoi(srcGray, rotated, roi, method);
-			if (m.score > best.score) {
-				best = m;
-				bestAngle = a;
-			}
-		}
-	}
-
-	if (bestAngleOut) *bestAngleOut = bestAngle;
-	return best;
-}
-
-static std::vector<double> buildTrackBarScales() {
-	std::vector<double> scales;
-	// 优先使用 range（0.9~2.0, step=0.1），便于适配不同分辨率/UI缩放
-	if (std::isfinite(config.track_scale_min) && std::isfinite(config.track_scale_max)
-		&& std::isfinite(config.track_scale_step)
-		&& config.track_scale_min > 0.0 && config.track_scale_max > 0.0 && config.track_scale_step > 0.0
-		&& config.track_scale_max >= config.track_scale_min) {
-		scales = buildScaleRange(config.track_scale_min, config.track_scale_max, config.track_scale_step, 128);
-	}
-	if (scales.empty()) {
-		scales = {
-			config.track_scale_1,
-			config.track_scale_2,
-			config.track_scale_3,
-			config.track_scale_4
-		};
-		sortUniqueScales(scales);
-	}
-	return scales;
-}
-
-static TplMatch matchBestRoiTrackBarAutoScale(
-	const Mat& srcGray,
-	const g_params::GrayTpl& tpl,
-	Rect roi,
-	int method = TM_CCOEFF_NORMED,
-	double* bestScaleOut = nullptr,
-	double* bestAngleOut = nullptr
-) {
-	std::vector<double> coarse = buildTrackBarScales();
-	double bestScale = 1.0;
-	TplMatch best = matchBestRoiMultiScaleCoarseToFine(
-		srcGray,
-		tpl,
-		roi,
-		coarse,
-		config.track_scale_refine_topk,
-		config.track_scale_refine_radius,
-		config.track_scale_refine_step,
-		method,
-		&bestScale
-	);
-	double bestAngle = 0.0;
-	if (std::isfinite(config.track_angle_min) && std::isfinite(config.track_angle_max)
-		&& std::isfinite(config.track_angle_step)
-		&& config.track_angle_step > 0.0) {
-		double aMin = config.track_angle_min;
-		double aMax = config.track_angle_max;
-		if (aMin > aMax) std::swap(aMin, aMax);
-		std::vector<double> angles = buildAngleRange(aMin, aMax, config.track_angle_step, 256);
-		if (!angles.empty()) {
-			best = matchBestRoiMultiAngleAtScaleCoarseToFine(
-				srcGray,
-				tpl,
-				roi,
-				bestScale,
-				angles,
-				config.track_angle_refine_topk,
-				config.track_angle_refine_radius,
-				config.track_angle_refine_step,
-				method,
-				&bestAngle
-			);
-		}
-	}
-	if (bestScaleOut) *bestScaleOut = bestScale;
-	if (bestAngleOut) *bestAngleOut = bestAngle;
-	return best;
-}
-
-// --- Window activation (foreground mode only) ---
-static void activateGameWindowInner(bool forceCursorCenter) {
-	if (config.background_input) return;
-	HWND hwnd = params.hwnd;
-	if (!hwnd) return;
-	if (IsIconic(hwnd)) {
-		ShowWindow(hwnd, SW_RESTORE);
-	}
-	SetForegroundWindow(hwnd);
-	BringWindowToTop(hwnd);
-	if (config.vr_debug) {
-		HWND fg = GetForegroundWindow();
-		if (fg != hwnd) {
-			static unsigned long long lastWarnMs = 0;
-			unsigned long long t = GetTickCount64();
-			if (t - lastWarnMs > 2000) {
-				LOG_WARN("[vrchat_fish] foreground hwnd mismatch (fg=%p vrchat=%p)", (void*)fg, (void*)hwnd);
-				lastWarnMs = t;
-			}
-		}
-	}
-	RECT r = params.rect;
-	if (r.right > r.left && r.bottom > r.top) {
-		POINT p{};
-		if (GetCursorPos(&p)) {
-			if (forceCursorCenter || p.x < r.left || p.x >= r.right || p.y < r.top || p.y >= r.bottom) {
-				SetCursorPos((r.left + r.right) / 2, (r.top + r.bottom) / 2);
-			}
-		}
-	}
-}
-
-static void activateGameWindow() {
-	activateGameWindowInner(false);
-}
-
-// --- Helper: get client center as LPARAM for PostMessage ---
-static LPARAM getClientCenterLParam() {
-	HWND hwnd = params.hwnd;
-	if (!hwnd) return MAKELPARAM(0, 0);
-	RECT cr;
-	GetClientRect(hwnd, &cr);
-	return MAKELPARAM((cr.right - cr.left) / 2, (cr.bottom - cr.top) / 2);
-}
-
-// --- Mouse / keyboard input ---
-static void sendMouseLeftRaw(DWORD flags, const char* phaseTag) {
-	INPUT input{};
-	input.type = INPUT_MOUSE;
-	input.mi.dwFlags = flags;
-	input.mi.time = NULL;
-	if (SendInput(1, &input, sizeof(INPUT)) != 1 && config.vr_debug) {
-		LOG_ERROR("[vrchat_fish] SendInput %s failed err=%lu", phaseTag, GetLastError());
-	}
-}
-
-static void mouseLeftDown() {
-	if (config.background_input) {
-		HWND hwnd = params.hwnd;
-		if (hwnd) PostMessage(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, getClientCenterLParam());
-		return;
-	}
-	activateGameWindow();
-	sendMouseLeftRaw(MOUSEEVENTF_LEFTDOWN, "leftdown");
-}
-
-static void mouseLeftUp() {
-	if (config.background_input) {
-		HWND hwnd = params.hwnd;
-		if (hwnd) PostMessage(hwnd, WM_LBUTTONUP, 0, getClientCenterLParam());
-		return;
-	}
-	activateGameWindow();
-	sendMouseLeftRaw(MOUSEEVENTF_LEFTUP, "leftup");
-}
-
-static void mouseLeftClickCentered(int delayMs = 40) {
-	if (config.background_input) {
-		HWND hwnd = params.hwnd;
-		if (!hwnd) return;
-		LPARAM lp = getClientCenterLParam();
-		PostMessage(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lp);
-		Sleep(delayMs);
-		PostMessage(hwnd, WM_LBUTTONUP, 0, lp);
-		return;
-	}
-	activateGameWindowInner(true);
-	sendMouseLeftRaw(MOUSEEVENTF_LEFTDOWN, "leftdown");
-	Sleep(delayMs);
-	sendMouseLeftRaw(MOUSEEVENTF_LEFTUP, "leftup");
-}
-
-static void mouseMoveRelative(int dx, int dy, const char* phaseTag) {
-	if (dx == 0 && dy == 0) return;
-	if (config.background_input) {
-		// PostMessage mouse move not needed for cast offset in background mode
-		return;
-	}
-	activateGameWindow();
-	INPUT input{};
-	input.type = INPUT_MOUSE;
-	input.mi.dwFlags = MOUSEEVENTF_MOVE;
-	input.mi.dx = dx;
-	input.mi.dy = dy;
-	input.mi.time = NULL;
-	if (SendInput(1, &input, sizeof(INPUT)) != 1 && config.vr_debug) {
-		LOG_ERROR("[vrchat_fish] SendInput %s failed err=%lu", phaseTag, GetLastError());
-	}
-}
-
-// ── OSC UDP sender (VRChat listens on 127.0.0.1:9000) ──
-
-static bool sendOscInt(const char* path, int value) {
-	// Build minimal OSC message: path (4-byte aligned) + ",i\0\0" + int32 big-endian
-	size_t pathLen = strlen(path) + 1; // include null
-	size_t pathPad = (4 - (pathLen % 4)) % 4;
-	size_t totalPathLen = pathLen + pathPad;
-	const char typeTag[] = ",i\0\0";
-	size_t msgLen = totalPathLen + 4 + 4; // path + type tag + int32
-
-	std::vector<char> buf(msgLen, 0);
-	memcpy(buf.data(), path, strlen(path));
-	memcpy(buf.data() + totalPathLen, typeTag, 4);
-	// Big-endian int32
-	uint32_t be = htonl((uint32_t)value);
-	memcpy(buf.data() + totalPathLen + 4, &be, 4);
-
-	SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (sock == INVALID_SOCKET) return false;
-
-	sockaddr_in addr{};
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(9000);
-	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-
-	int sent = sendto(sock, buf.data(), (int)msgLen, 0, (sockaddr*)&addr, sizeof(addr));
-	closesocket(sock);
-	return sent > 0;
-}
-
-static void shakeHeadOSC() {
-	int durationMs = config.osc_shake_duration_ms;
-	if (durationMs <= 0) durationMs = 20;
-
-	sendOscInt("/input/LookRight", 1);
-	Sleep(durationMs);
-	sendOscInt("/input/LookRight", 0);
-	Sleep(50);
-
-	sendOscInt("/input/LookLeft", 1);
-	Sleep(durationMs);
-	sendOscInt("/input/LookLeft", 0);
-	Sleep(50);
-}
-
-static void keyTapVk(WORD vk, int delayMs = 30) {
-	if (config.background_input) {
-		HWND hwnd = params.hwnd;
-		if (!hwnd) return;
-		UINT scanCode = MapVirtualKey(vk, MAPVK_VK_TO_VSC);
-		LPARAM downLParam = (LPARAM)(1 | (scanCode << 16));
-		LPARAM upLParam   = (LPARAM)(1 | (scanCode << 16) | (1 << 30) | (1 << 31));
-		PostMessage(hwnd, WM_KEYDOWN, vk, downLParam);
-		Sleep(delayMs);
-		PostMessage(hwnd, WM_KEYUP, vk, upLParam);
-		return;
-	}
-	activateGameWindow();
-	INPUT input{};
-	input.type = INPUT_KEYBOARD;
-	input.ki.wVk = vk;
-	input.ki.wScan = (WORD)MapVirtualKey(vk, MAPVK_VK_TO_VSC);
-	input.ki.dwFlags = 0;
-	if (SendInput(1, &input, sizeof(INPUT)) != 1 && config.vr_debug) {
-		LOG_ERROR("[vrchat_fish] SendInput keydown failed err=%lu", GetLastError());
-	}
-	Sleep(delayMs);
-	input.ki.dwFlags = KEYEVENTF_KEYUP;
-	if (SendInput(1, &input, sizeof(INPUT)) != 1 && config.vr_debug) {
-		LOG_ERROR("[vrchat_fish] SendInput keyup failed err=%lu", GetLastError());
-	}
-}
-
-static bool ensureDirExists(const std::string& dir) {
-	if (dir.empty()) {
-		return false;
-	}
-
-	std::string path = dir;
-	std::replace(path.begin(), path.end(), '/', '\\');
-
-	DWORD attrs = GetFileAttributesA(path.c_str());
-	if (attrs != INVALID_FILE_ATTRIBUTES) {
-		return (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
-	}
-
-	int rc = SHCreateDirectoryExA(NULL, path.c_str(), NULL);
-	if (rc == ERROR_SUCCESS || rc == ERROR_ALREADY_EXISTS || rc == ERROR_FILE_EXISTS) {
-		return true;
-	}
-
-	// Re-check in case another process created it.
-	attrs = GetFileAttributesA(path.c_str());
-	return (attrs != INVALID_FILE_ATTRIBUTES) && ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0);
-}
-
-static std::string makeDebugPath(const std::string& tag) {
-	std::string dir = config.vr_debug_dir.empty() ? "debug_vrchat" : config.vr_debug_dir;
-	// Make path absolute if relative (SHCreateDirectoryExA needs absolute paths)
-	if (dir.size() < 2 || (dir[1] != ':' && dir[0] != '\\')) {
-		char cwd[MAX_PATH];
-		if (GetCurrentDirectoryA(MAX_PATH, cwd)) {
-			dir = std::string(cwd) + "\\" + dir;
-		}
-	}
-	std::replace(dir.begin(), dir.end(), '/', '\\');
-	ensureDirExists(dir);
-	return dir + "\\" + tag + "_" + std::to_string(GetTickCount64()) + ".png";
-}
-
-static void saveDebugFrame(const Mat& bgr, const std::string& tag) {
-	if (!config.vr_debug_pic) {
-		return;
-	}
-	if (bgr.empty()) {
-		return;
-	}
-	imwrite(makeDebugPath(tag), bgr);
-}
-
-static void saveDebugFrame(const Mat& bgr, const std::string& tag, const Rect& r1, const Scalar& c1 = Scalar(0, 0, 255)) {
-	if (!config.vr_debug_pic) {
-		return;
-	}
-	if (bgr.empty()) {
-		return;
-	}
-	Mat out = bgr.clone();
-	rectangle(out, r1, c1, 2, 8, 0);
-	imwrite(makeDebugPath(tag), out);
-}
-
-static void saveDebugFrame(const Mat& bgr, const std::string& tag, const Rect& r1, const Rect& r2) {
-	if (!config.vr_debug_pic) {
-		return;
-	}
-	if (bgr.empty()) {
-		return;
-	}
-	Mat out = bgr.clone();
-	rectangle(out, r1, Scalar(0, 0, 255), 2, 8, 0);
-	rectangle(out, r2, Scalar(0, 255, 0), 2, 8, 0);
-	imwrite(makeDebugPath(tag), out);
-}
-
-static void saveDebugFrame(const Mat& bgr, const std::string& tag, const Rect& r1, const Rect& r2, const Rect& r3) {
-	if (!config.vr_debug_pic) {
-		return;
-	}
-	if (bgr.empty()) {
-		return;
-	}
-	Mat out = bgr.clone();
-	rectangle(out, r1, Scalar(255, 0, 0), 2, 8, 0);   // 蓝框: searchRoi
-	rectangle(out, r2, Scalar(0, 255, 0), 2, 8, 0);   // 绿框: 模板匹配位置
-	rectangle(out, r3, Scalar(0, 0, 255), 2, 8, 0);   // 红框: 最终锁定 ROI
-	imwrite(makeDebugPath(tag), out);
-}
-
-enum class VrFishState {
-	Cast,
-	WaitBite,
-	EnterMinigame,
-	ControlMinigame,
-	PostMinigame,
-};
+// VrFishState enum defined in core/types.h
 
 static unsigned long long nowMs() {
 	return GetTickCount64();
 }
 
-static bool detectBite(const Mat& gray, TplMatch* matchOut = nullptr) {
-	TplMatch m = matchBest(gray, params.tpl_vr_bite_excl_bottom);
-	if (m.score < config.bite_threshold) {
-		TplMatch m2 = matchBest(gray, params.tpl_vr_bite_excl_full);
-		if (m2.score > m.score) {
-			m = m2;
-		}
-	}
-	if (matchOut) *matchOut = m;
-	return m.score >= config.bite_threshold;
-}
+// Detection functions: engine/detectors.h
+// FishSliderResult struct defined in core/types.h
 
-// ── 颜色检测：在竖条上找到玩家滑块（亮色区域）的上下边界 ──
-// 在 barX 附近的窄列中，用亮度阈值找最长连续亮色段作为滑块
-// 返回 sliderTop, sliderBottom（全图坐标），成功返回 true
-static bool detectSliderBounds(const Mat& gray, int barX, const Rect& searchRoi,
-	int* sliderTopOut, int* sliderBottomOut, int* sliderCenterYOut,
-	int brightnessThresh = 180, int minSliderHeight = 15) {
-
-	// 取 barX 附近 ±halfW 像素宽的竖条取中值，抗噪声
-	int halfW = config.slider_detect_half_width;
-	if (halfW < 0) halfW = 0;
-	int x1 = max(searchRoi.x, barX - halfW);
-	int x2 = min(searchRoi.x + searchRoi.width, barX + halfW + 1);
-	if (x2 <= x1) return false;
-
-	int y1 = searchRoi.y;
-	int y2 = searchRoi.y + searchRoi.height;
-	if (y1 < 0) y1 = 0;
-	if (y2 > gray.rows) y2 = gray.rows;
-	if (y2 <= y1) return false;
-
-	// 对每行取该窄条的平均亮度，收集所有亮色段
-	struct BrightRun { int start; int len; };
-	std::vector<BrightRun> runs;
-	int curRunStart = -1, curRunLen = 0;
-
-	for (int y = y1; y < y2; y++) {
-		const uchar* row = gray.ptr<uchar>(y);
-		int sum = 0;
-		for (int x = x1; x < x2; x++) {
-			sum += row[x];
-		}
-		int avg = sum / (x2 - x1);
-
-		if (avg >= brightnessThresh) {
-			if (curRunStart < 0) curRunStart = y;
-			curRunLen = y - curRunStart + 1;
-		} else {
-			if (curRunLen > 0) {
-				runs.push_back({ curRunStart, curRunLen });
-			}
-			curRunStart = -1;
-			curRunLen = 0;
-		}
-	}
-	// 收尾
-	if (curRunLen > 0) {
-		runs.push_back({ curRunStart, curRunLen });
-	}
-
-	if (runs.empty()) return false;
-
-	// 合并相邻亮色段：如果两段间隔 <= maxGap 像素，视为同一滑块（鱼图标造成的分割）
-	int maxGap = config.slider_detect_merge_gap;
-	if (maxGap < 0) maxGap = 0;
-	std::vector<BrightRun> merged;
-	merged.push_back(runs[0]);
-	for (size_t i = 1; i < runs.size(); i++) {
-		BrightRun& last = merged.back();
-		int lastEnd = last.start + last.len;
-		int gap = runs[i].start - lastEnd;
-		if (gap <= maxGap) {
-			// 合并：扩展到包含新段
-			last.len = (runs[i].start + runs[i].len) - last.start;
-		} else {
-			merged.push_back(runs[i]);
-		}
-	}
-
-	// 从合并后的段中找最长的
-	int bestIdx = 0;
-	for (size_t i = 1; i < merged.size(); i++) {
-		if (merged[i].len > merged[bestIdx].len) bestIdx = (int)i;
-	}
-	int bestRunStart = merged[bestIdx].start;
-	int bestRunLen = merged[bestIdx].len;
-
-	if (bestRunLen < minSliderHeight) return false;
-	// 防止误把整条轨道（或背景高亮）当成滑块
-	if (bestRunLen >= (int)((y2 - y1) * 0.95)) return false;
-
-	if (sliderTopOut) *sliderTopOut = bestRunStart;
-	if (sliderBottomOut) *sliderBottomOut = bestRunStart + bestRunLen;
-	if (sliderCenterYOut) *sliderCenterYOut = bestRunStart + bestRunLen / 2;
-	return true;
-}
-
-// ── 颜色检测（整段扫）：在整个轨道 ROI 内找滑块亮段的上下边界 ──
-// 思路：对 ROI 的每一行统计“亮色像素数量”，连续超过阈值的区间视为滑块
-// 这样就不依赖滑块模板给出的 barX，也更不怕被鱼遮挡导致模板偏移
-static bool detectSliderBoundsWide(const Mat& gray, const Rect& searchRoi,
-	int* sliderTopOut, int* sliderBottomOut, int* sliderCenterYOut,
-	int brightnessThresh = 180, int minSliderHeight = 15) {
-
-	Rect roi = clampRect(searchRoi, gray.size());
-	if (roi.width <= 0 || roi.height <= 0) return false;
-
-	int x1 = roi.x;
-	int x2 = roi.x + roi.width;
-	int y1 = roi.y;
-	int y2 = roi.y + roi.height;
-	if (x2 <= x1 || y2 <= y1) return false;
-
-	// 每行至少需要多少个“足够亮”的像素才算滑块范围
-	// ROI 宽度通常在 40~60 左右，滑块宽度约占其中一半；这里取一个较保守的比例
-	int minRowBright = roi.width / 8; // 约 12.5%
-	if (minRowBright < 4) minRowBright = 4;
-	if (minRowBright > roi.width) minRowBright = roi.width;
-
-	struct BrightRun { int start; int len; };
-	std::vector<BrightRun> runs;
-	int curRunStart = -1, curRunLen = 0;
-
-	for (int y = y1; y < y2; y++) {
-		const uchar* row = gray.ptr<uchar>(y);
-		int brightCnt = 0;
-		for (int x = x1; x < x2; x++) {
-			if (row[x] >= brightnessThresh) {
-				brightCnt++;
-			}
-		}
-
-		if (brightCnt >= minRowBright) {
-			if (curRunStart < 0) curRunStart = y;
-			curRunLen = y - curRunStart + 1;
-		} else {
-			if (curRunLen > 0) {
-				runs.push_back({ curRunStart, curRunLen });
-			}
-			curRunStart = -1;
-			curRunLen = 0;
-		}
-	}
-	if (curRunLen > 0) {
-		runs.push_back({ curRunStart, curRunLen });
-	}
-	if (runs.empty()) return false;
-
-	// 合并相邻亮段（鱼图标挡住滑块会把亮段切开）
-	int maxGap = config.slider_detect_merge_gap;
-	if (maxGap < 0) maxGap = 0;
-	std::vector<BrightRun> merged;
-	merged.push_back(runs[0]);
-	for (size_t i = 1; i < runs.size(); i++) {
-		BrightRun& last = merged.back();
-		int lastEnd = last.start + last.len;
-		int gap = runs[i].start - lastEnd;
-		if (gap <= maxGap) {
-			last.len = (runs[i].start + runs[i].len) - last.start;
-		} else {
-			merged.push_back(runs[i]);
-		}
-	}
-
-	// 取最长段
-	int bestIdx = 0;
-	for (size_t i = 1; i < merged.size(); i++) {
-		if (merged[i].len > merged[bestIdx].len) bestIdx = (int)i;
-	}
-	int bestRunStart = merged[bestIdx].start;
-	int bestRunLen = merged[bestIdx].len;
-
-	if (bestRunLen < minSliderHeight) return false;
-	// 防止误把整条轨道（或背景高亮）当成滑块
-	if (bestRunLen >= (int)(roi.height * 0.95)) return false;
-
-	if (sliderTopOut) *sliderTopOut = bestRunStart;
-	if (sliderBottomOut) *sliderBottomOut = bestRunStart + bestRunLen;
-	if (sliderCenterYOut) *sliderCenterYOut = bestRunStart + bestRunLen / 2;
-	return true;
-}
-
-struct FishSliderResult {
-	int fishX, fishY;
-	int sliderCenterX, sliderCenterY;
-	int sliderTop, sliderBottom;    // 滑块上下边界（颜色检测）
-	int sliderHeight;               // 滑块实际高度（像素）
-	double fishScore, sliderScore;
-	bool hasBounds;                 // 是否成功检测到滑块边界
-};
-
-static Point2f affineTransformPoint(const Mat& M, const Point2f& p) {
-	// M: 2x3
-	Point2f out{};
-	if (M.empty() || M.rows != 2 || M.cols != 3) {
-		return p;
-	}
-	out.x = (float)(M.at<double>(0, 0) * p.x + M.at<double>(0, 1) * p.y + M.at<double>(0, 2));
-	out.y = (float)(M.at<double>(1, 0) * p.x + M.at<double>(1, 1) * p.y + M.at<double>(1, 2));
-	return out;
-}
-
-static bool fillFishSliderResult(const Mat& gray, const Rect& roi, const TplMatch& fish, const TplMatch& slider,
-	double trackAngleDeg, int fishTplHeightHint, FishSliderResult* result) {
-	if (!result) return false;
-	*result = FishSliderResult{};
-
-	result->fishScore = fish.score;
-	result->sliderScore = slider.score;
-	if (fish.score < config.fish_icon_threshold) {
-		return false;
-	}
-
-	result->fishX = fish.center.x;
-	result->fishY = fish.center.y;
-	// 不再依赖滑块模板位置：默认用 fishX 作为滑块X（只用于日志/调试，控制只用 Y）
-	result->sliderCenterX = fish.center.x;
-	result->sliderCenterY = slider.center.y;
-
-	// 颜色检测：优先在整个轨道 ROI 内扫亮度线条（不依赖滑块模板分数/位置）
-	// minSliderHeight 过小会把“鱼图标”这种短亮段误当成滑块，这里做个下限保护
-	int effectiveMinH = config.slider_min_height;
-	int fishTplH = fishTplHeightHint;
-	if (fishTplH <= 0) fishTplH = params.tpl_vr_fish_icon.rows();
-	if (fishTplH > 0 && effectiveMinH < fishTplH + 5) effectiveMinH = fishTplH + 5;
-	int sliderTop = 0, sliderBottom = 0, sliderCenterFromColor = 0;
-	{
-		Rect r = clampRect(roi, gray.size());
-		Mat roiGray = gray(r);
-		Rect localRoi(0, 0, roiGray.cols, roiGray.rows);
-
-		// 旋转矫正：轨道检测得到 angle 后，亮度检测也按同角度把 ROI 旋回到“竖直”再扫（提高鲁棒性）
-		double a = trackAngleDeg;
-		if (!std::isfinite(a)) a = 0.0;
-		Mat scanGray = roiGray; // default: no rotation
-		Mat rotated;
-		Mat M, Minv;
-		int barXLocal = fish.center.x - r.x;
-		int barYLocal = fish.center.y - r.y;
-		if (barXLocal < 0) barXLocal = 0;
-		if (barXLocal >= roiGray.cols) barXLocal = roiGray.cols - 1;
-		if (barYLocal < 0) barYLocal = 0;
-		if (barYLocal >= roiGray.rows) barYLocal = roiGray.rows - 1;
-
-		float barXForMap = (float)barXLocal; // original-local x for mapping
-		if (std::abs(a) > 1e-6 && roiGray.cols > 1 && roiGray.rows > 1) {
-			Point2f c((float)roiGray.cols / 2.0f, (float)roiGray.rows / 2.0f);
-			M = getRotationMatrix2D(c, -a, 1.0);
-			Minv = getRotationMatrix2D(c, +a, 1.0);
-			warpAffine(roiGray, rotated, M, roiGray.size(), INTER_LINEAR, BORDER_CONSTANT, Scalar(0));
-			scanGray = rotated;
-
-			// barX 也需要变换到旋转后的坐标系下（用于窄条扫描兜底 + 反变换坐标）
-			Point2f barRot = affineTransformPoint(M, Point2f((float)barXLocal, (float)barYLocal));
-			barXForMap = barRot.x;
-			if (barXForMap < 0.0f) barXForMap = 0.0f;
-			if (barXForMap > (float)(roiGray.cols - 1)) barXForMap = (float)(roiGray.cols - 1);
-			barXLocal = (int)std::round(barXForMap);
-		}
-
-		int t = 0, b = 0, cy = 0;
-		bool okColor = detectSliderBoundsWide(scanGray, localRoi,
-			&t, &b, &cy,
-			config.slider_bright_thresh, effectiveMinH)
-			|| detectSliderBounds(scanGray, barXLocal, localRoi,
-				&t, &b, &cy,
-				config.slider_bright_thresh, effectiveMinH);
-
-		if (okColor) {
-			// 坐标反变换回原图坐标（保持与 fishY / fixedTrackRoi.y 一致的全图坐标系）
-			if (!Minv.empty()) {
-				Point2f pTop = affineTransformPoint(Minv, Point2f(barXForMap, (float)t));
-				Point2f pBot = affineTransformPoint(Minv, Point2f(barXForMap, (float)b));
-				Point2f pCy = affineTransformPoint(Minv, Point2f(barXForMap, (float)cy));
-				sliderTop = (int)std::round(pTop.y) + r.y;
-				sliderBottom = (int)std::round(pBot.y) + r.y;
-				sliderCenterFromColor = (int)std::round(pCy.y) + r.y;
-			} else {
-				sliderTop = t + r.y;
-				sliderBottom = b + r.y;
-				sliderCenterFromColor = cy + r.y;
-			}
-
-			int maxY = gray.rows > 0 ? (gray.rows - 1) : 0;
-			if (sliderTop < 0) sliderTop = 0;
-			if (sliderTop > maxY) sliderTop = maxY;
-			if (sliderBottom < sliderTop) sliderBottom = sliderTop;
-			if (sliderBottom > gray.rows) sliderBottom = gray.rows;
-			if (sliderCenterFromColor < 0) sliderCenterFromColor = 0;
-			if (sliderCenterFromColor > maxY) sliderCenterFromColor = maxY;
-
-			result->sliderTop = sliderTop;
-			result->sliderBottom = sliderBottom;
-			result->sliderHeight = sliderBottom - sliderTop;
-			result->sliderCenterY = sliderCenterFromColor;  // 用颜色检测的中心覆盖模板匹配的中心
-			result->hasBounds = true;
-		}
-	}
-
-	if (!result->hasBounds) {
-		// 颜色检测失败 → 退回滑块模板（作为兜底）
-		if (slider.score < config.slider_threshold) {
-			return false;
-		}
-		int tplH = params.tpl_vr_player_slider.rows();
-		result->sliderTop = slider.center.y - tplH / 2;
-		result->sliderBottom = slider.center.y + tplH / 2;
-		result->sliderHeight = tplH;
-		result->hasBounds = false;
-	}
-
-	return true;
-}
-
-	// 快速检测（控制循环用）：固定 trackScale/angle + 单鱼模板，仅 2 次 matchTemplate
-	// cachedFishTplIdx: params.tpl_vr_fish_icons 的索引（fish_icon + fish_icon_alt*.png）
-	static bool detectFishAndSliderFast(const Mat& gray, const Rect& barRect, FishSliderResult* result,
-		double trackScale, double trackAngleDeg, int cachedFishTplIdx) {
-		Rect roi = clampRect(barRect, gray.size());
-		if (roi.width <= 0 || roi.height <= 0) return false;
-
-		double s = trackScale;
-		if (!std::isfinite(s) || s <= 0.0) s = 1.0;
-
-		const g_params::GrayTpl* fishTplPtr = &params.tpl_vr_fish_icon;
-		if (!params.tpl_vr_fish_icons.empty()) {
-			int idx = cachedFishTplIdx;
-			if (idx < 0) idx = 0;
-			if (idx >= (int)params.tpl_vr_fish_icons.size()) idx = 0;
-			fishTplPtr = &params.tpl_vr_fish_icons[(size_t)idx];
-		}
-		const auto& fishTpl = *fishTplPtr;
-		TplMatch fish = matchBestRoiAtScaleAndAngle(gray, fishTpl, roi, s, trackAngleDeg, TM_CCOEFF_NORMED);
-		TplMatch slider = matchBestRoi(gray, params.tpl_vr_player_slider, roi, TM_CCORR_NORMED);
-		int fishTplHScaled = (int)std::round((double)fishTpl.rows() * s);
-		return fillFishSliderResult(gray, roi, fish, slider, trackAngleDeg, fishTplHScaled, result);
-	}
-
-	// 全检测（首帧 + 周期性刷新用）：固定 trackScale/angle 下尝试多鱼模板，输出最佳模板索引
-	static bool detectFishAndSliderFull(const Mat& gray, const Rect& barRect, FishSliderResult* result,
-		double trackScale, double trackAngleDeg, int* bestTplIdxOut) {
-		Rect roi = clampRect(barRect, gray.size());
-		if (roi.width <= 0 || roi.height <= 0) return false;
-
-		double s = trackScale;
-		if (!std::isfinite(s) || s <= 0.0) s = 1.0;
-
-		if (params.tpl_vr_fish_icons.empty()) {
-			return false;
-		}
-		TplMatch fish{};
-		int bestIdx = 0;
-		for (size_t i = 0; i < params.tpl_vr_fish_icons.size(); i++) {
-			const auto& tpl = params.tpl_vr_fish_icons[i];
-			TplMatch m = matchBestRoiAtScaleAndAngle(gray, tpl, roi, s, trackAngleDeg, TM_CCOEFF_NORMED);
-			if (m.score > fish.score) {
-				fish = m;
-				bestIdx = (int)i;
-			}
-		}
-
-		TplMatch slider = matchBestRoi(gray, params.tpl_vr_player_slider, roi, TM_CCORR_NORMED);
-		int fishTplHScaled = (int)std::round((double)params.tpl_vr_fish_icons[(size_t)bestIdx].rows() * s);
-		bool ok = fillFishSliderResult(gray, roi, fish, slider, trackAngleDeg, fishTplHScaled, result);
-		if (!ok) {
-			return false;
-		}
-		if (bestTplIdxOut) *bestTplIdxOut = bestIdx;
-		return true;
-	}
-
-// ── MLP 权重加载（为后续推理模式预留） ─────────────────────────
-struct MlpLayer {
-	int in_dim, out_dim;
-	std::vector<double> weights; // out_dim × in_dim (row-major)
-	std::vector<double> bias;    // out_dim
-};
-
-struct MlpModel {
-	std::vector<MlpLayer> layers;
-	std::vector<double> norm_mean;  // 输入特征归一化均值
-	std::vector<double> norm_std;   // 输入特征归一化标准差
-	bool loaded = false;
-};
-
-static MlpModel g_mlpModel;
-
-static bool loadMlpWeights(const std::string& path, MlpModel& model) {
-	std::ifstream f(path);
-	if (!f.is_open()) {
-		LOG_ERROR("[ML] Cannot open weights file: %s", path.c_str());
-		return false;
-	}
-	model.layers.clear();
-	std::string line;
-	while (std::getline(f, line)) {
-		// 跳过空行和注释
-		if (line.empty() || line[0] == '#') continue;
-		// 读取 in_dim out_dim
-		std::istringstream hdr(line);
-		int in_dim, out_dim;
-		if (!(hdr >> in_dim >> out_dim)) continue;
-		MlpLayer layer;
-		layer.in_dim = in_dim;
-		layer.out_dim = out_dim;
-		layer.weights.resize(out_dim * in_dim);
-		layer.bias.resize(out_dim);
-		// 读取 weight matrix (out_dim 行, 每行 in_dim 个值)
-		for (int r = 0; r < out_dim; r++) {
-			if (!std::getline(f, line)) { LOG_ERROR("[ML] Weight file format error (weights)"); return false; }
-			std::istringstream row(line);
-			for (int c = 0; c < in_dim; c++) {
-				if (!(row >> layer.weights[r * in_dim + c])) {
-					LOG_ERROR("[ML] Weight file format error (weight value)");
-					return false;
-				}
-			}
-		}
-		// 读取 bias vector (1 行, out_dim 个值)
-		if (!std::getline(f, line)) { LOG_ERROR("[ML] Weight file format error (bias)"); return false; }
-		std::istringstream brow(line);
-		for (int r = 0; r < out_dim; r++) {
-			if (!(brow >> layer.bias[r])) {
-				LOG_ERROR("[ML] Weight file format error (bias value)");
-				return false;
-			}
-		}
-		model.layers.push_back(std::move(layer));
-	}
-	if (model.layers.empty()) {
-		LOG_ERROR("[ML] Weight file is empty");
-		return false;
-	}
-	model.loaded = true;
-	LOG_INFO("[ML] Model loaded: %zu layers", model.layers.size());
-
-	// 加载归一化参数 (weights_file 路径将 .txt 替换为 _norm.txt)
-	std::string normPath = path;
-	size_t dotPos = normPath.rfind('.');
-	if (dotPos != std::string::npos)
-		normPath = normPath.substr(0, dotPos) + "_norm.txt";
-	else
-		normPath += "_norm";
-	std::ifstream nf(normPath);
-	if (nf.is_open()) {
-		std::string nline;
-		model.norm_mean.clear();
-		model.norm_std.clear();
-		while (std::getline(nf, nline)) {
-			if (nline.empty() || nline[0] == '#') continue;
-			std::istringstream ns(nline);
-			double m, s;
-			if (ns >> m >> s) {
-				model.norm_mean.push_back(m);
-				model.norm_std.push_back(s);
-			}
-		}
-		LOG_INFO("[ML] Normalization params loaded: %zu features", model.norm_mean.size());
-	} else {
-		LOG_WARN("[ML] Normalization file not found: %s, using raw input", normPath.c_str());
-	}
-	return true;
-}
+// ML model: engine/ml_model.h
 
 void fishVrchat() {
 	g_fishStatus.running.store(true);
@@ -2077,6 +505,7 @@ void fishVrchat() {
 	int lastGoodSliderCY = 0;      // 上次可信的滑块中心Y（用于 [tpl] 跳变检查）
 	bool hasLastGoodPos = false;   // 是否有上次可信位置
 	int consecutiveMiss = 0;       // 连续 MISS 帧数（用于 MISS 期间松开鼠标）
+	int consecutiveFails = 0;      // consecutive failed casts (for OSC shake trigger)
 	Rect fixedTrackRoi{};          // 首帧定位的固定轨道 ROI（整局不变）
 	bool hasFixedTrack = false;    // 是否已定位轨道
 
@@ -2258,10 +687,14 @@ void fishVrchat() {
 				castMouseMoveDx = 0;
 				castMouseMoveDy = 0;
 			}
-			if (config.osc_head_shake) {
+			if (config.osc_head_shake && consecutiveFails > config.osc_shake_after_fails) {
 				shakeHeadOSC();
 				if (config.vr_debug) {
-					LOG_DEBUG("[vrchat_fish] OSC head shake before cast (duration=%dms)", config.osc_shake_duration_ms);
+					LOG_DEBUG("[vrchat_fish] OSC head shake (fails=%d, threshold=%d, duration=%dms)",
+						consecutiveFails, config.osc_shake_after_fails, config.osc_shake_duration_ms);
+				}
+				if (config.osc_shake_post_delay_ms > 0) {
+					sleepWithPause(config.osc_shake_post_delay_ms);
 				}
 			}
 			mouseLeftClickCentered();
@@ -2399,8 +832,26 @@ void fishVrchat() {
 		Mat frame = getSrc(params.hwnd, params.rect);
 		// Update preview frame for GUI (will be overwritten with annotated version during ControlMinigame)
 		if (config.gui_preview_enabled) {
+			Mat preview = frame.clone();
+			if (config.gui_preview_boxes) {
+				int cx = preview.cols / 2;
+				int cy = preview.rows / 2;
+				// Semi-transparent crosshair at click center (white, alpha blended)
+				Mat overlay = preview.clone();
+				int arm = 12;
+				line(overlay, Point(cx - arm, cy), Point(cx + arm, cy), Scalar(255, 255, 255), 1);
+				line(overlay, Point(cx, cy - arm), Point(cx, cy + arm), Scalar(255, 255, 255), 1);
+				// If mouse offset active, show offset position (yellow)
+				if (castMouseMoved) {
+					int ox = cx + castMouseMoveDx;
+					int oy = cy + castMouseMoveDy;
+					line(overlay, Point(ox - arm, oy), Point(ox + arm, oy), Scalar(0, 255, 255), 1);
+					line(overlay, Point(ox, oy - arm), Point(ox, oy + arm), Scalar(0, 255, 255), 1);
+				}
+				addWeighted(overlay, 0.4, preview, 0.6, 0, preview);
+			}
 			std::lock_guard<std::mutex> lock(g_fishStatus.frameMutex);
-			g_fishStatus.latestFrame = frame.clone();
+			g_fishStatus.latestFrame = preview;
 			g_fishStatus.frameUpdated = true;
 		}
 		Mat gray;
@@ -2475,6 +926,8 @@ void fishVrchat() {
 				}
 				saveDebugFrame(frame, "bite_timeout");
 				cleanupToNextRound("bite_timeout");
+				consecutiveFails++;
+				sleepWithPause(config.recast_fail_delay_ms);
 				switchState(VrFishState::Cast);
 				continue;
 			}
@@ -2572,6 +1025,8 @@ void fishVrchat() {
 								saveDebugFrame(frame, "verify_minigame_timeout");
 								if (holding) { mouseLeftUp(); holding = false; }
 								mouseLeftClickCentered(); // retract rod, then Cast will cast again
+								consecutiveFails++;
+								sleepWithPause(config.recast_fail_delay_ms);
 								switchState(VrFishState::Cast);
 							}
 						}
@@ -3029,6 +1484,8 @@ void fishVrchat() {
 					saveDebugFrame(frame, "static_timeout", fixedTrackRoi);
 					if (holding) { mouseLeftUp(); holding = false; }
 					mouseLeftClickCentered();
+					consecutiveFails++;
+					sleepWithPause(config.recast_fail_delay_ms);
 					switchState(VrFishState::Cast);
 				}
 			}
@@ -3046,6 +1503,7 @@ void fishVrchat() {
 			}
 			// 回合结束后不再依赖 xp.png 识别：固定等待 -> 多次点击入包 -> 按 T 强制收杆 -> 再等待 -> 下一轮
 			cleanupToNextRound("post_minigame");
+			consecutiveFails = 0;
 			switchState(VrFishState::Cast);
 			g_fishStatus.catchCount.fetch_add(1);
 			continue;

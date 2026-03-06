@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-03-06
+
+### Added
+- Modular code refactoring: split monolithic vrc-fish.cpp into core/, engine/, infra/, runtime/ modules
+- OSC head shake only triggers after N consecutive failures (`osc_shake_after_fails`, default 1)
+- Configurable delay after OSC shake before casting (`osc_shake_post_delay_ms`, default 500ms)
+- Separate configurable delay for failed recasts (`recast_fail_delay_ms`, default 1000ms)
+- Background mode mouse movement support via PostMessage WM_MOUSEMOVE
+- Preview crosshair overlay showing click center and mouse offset position
+- GUI controls and translations (EN/ZH/JA) for all new settings
+
+### Changed
+- OSC head shake disabled by default
+
 ## [2.2.0] - 2026-03-05
 
 ### Added

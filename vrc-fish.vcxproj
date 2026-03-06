@@ -161,6 +161,14 @@
     <ClCompile Include="imgui\imgui_widgets.cpp" />
     <ClCompile Include="imgui\backends\imgui_impl_dx11.cpp" />
     <ClCompile Include="imgui\backends\imgui_impl_win32.cpp" />
+    <ClCompile Include="engine\debug_frame.cpp" />
+    <ClCompile Include="engine\detectors.cpp" />
+    <ClCompile Include="engine\matcher.cpp" />
+    <ClCompile Include="engine\ml_model.cpp" />
+    <ClCompile Include="engine\template_store.cpp" />
+    <ClCompile Include="infra\fs\path_utils.cpp" />
+    <ClCompile Include="infra\win\input_api.cpp" />
+    <ClCompile Include="infra\win\window_api.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Ciclequeue.h" />
@@ -173,6 +181,18 @@
     <ClInclude Include="gui\gui_panels.h" />
     <ClInclude Include="gui\gui_logger.h" />
     <ClInclude Include="gui\gui_state.h" />
+    <ClInclude Include="gui\gui_config_def.h" />
+    <ClInclude Include="gui\gui_lang.h" />
+    <ClInclude Include="core\types.h" />
+    <ClInclude Include="engine\debug_frame.h" />
+    <ClInclude Include="engine\detectors.h" />
+    <ClInclude Include="engine\matcher.h" />
+    <ClInclude Include="engine\ml_model.h" />
+    <ClInclude Include="engine\template_store.h" />
+    <ClInclude Include="infra\fs\path_utils.h" />
+    <ClInclude Include="infra\win\input_api.h" />
+    <ClInclude Include="infra\win\window_api.h" />
+    <ClInclude Include="runtime\params.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="vrc-fish.ico" />

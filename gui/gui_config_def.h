@@ -25,6 +25,7 @@ struct g_config {
 	int bite_autopull_ms;
 	int minigame_enter_delay_ms;
 	int minigame_verify_timeout_ms;
+	int recast_fail_delay_ms;
 	int cleanup_wait_before_ms;
 	int cleanup_click_count;
 	int cleanup_click_interval_ms;
@@ -115,6 +116,8 @@ struct g_config {
 
 	bool osc_head_shake;
 	int osc_shake_duration_ms;
+	int osc_shake_after_fails;
+	int osc_shake_post_delay_ms;
 
 	bool gui_preview_enabled;
 	bool gui_preview_boxes;

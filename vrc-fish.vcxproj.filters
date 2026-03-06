@@ -13,10 +13,52 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="core">
+      <UniqueIdentifier>{4E8074C6-7515-455B-8D92-C41E7492CE09}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="engine">
+      <UniqueIdentifier>{A5C50027-BD8E-4C01-B690-D0DD239F5718}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="infra">
+      <UniqueIdentifier>{E54724F8-CDAF-4145-96EA-5A5D0E789EFE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="infra\fs">
+      <UniqueIdentifier>{9B0AAE23-0C8D-4DCA-A910-7DDFF24849AB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="infra\win">
+      <UniqueIdentifier>{600D694D-A021-4AB4-80EE-E5AEEF781A1A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="runtime">
+      <UniqueIdentifier>{2210EA1D-8164-42BF-92EA-A04FB833C3BE}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="vrc-fish.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\debug_frame.cpp">
+      <Filter>engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\detectors.cpp">
+      <Filter>engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\matcher.cpp">
+      <Filter>engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\ml_model.cpp">
+      <Filter>engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\template_store.cpp">
+      <Filter>engine</Filter>
+    </ClCompile>
+    <ClCompile Include="infra\fs\path_utils.cpp">
+      <Filter>infra\fs</Filter>
+    </ClCompile>
+    <ClCompile Include="infra\win\input_api.cpp">
+      <Filter>infra\win</Filter>
+    </ClCompile>
+    <ClCompile Include="infra\win\window_api.cpp">
+      <Filter>infra\win</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -37,6 +79,36 @@
     </ClInclude>
     <ClInclude Include="Ciclequeue.h">
       <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="core\types.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\debug_frame.h">
+      <Filter>engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\detectors.h">
+      <Filter>engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\matcher.h">
+      <Filter>engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\ml_model.h">
+      <Filter>engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\template_store.h">
+      <Filter>engine</Filter>
+    </ClInclude>
+    <ClInclude Include="infra\fs\path_utils.h">
+      <Filter>infra\fs</Filter>
+    </ClInclude>
+    <ClInclude Include="infra\win\input_api.h">
+      <Filter>infra\win</Filter>
+    </ClInclude>
+    <ClInclude Include="infra\win\window_api.h">
+      <Filter>infra\win</Filter>
+    </ClInclude>
+    <ClInclude Include="runtime\params.h">
+      <Filter>runtime</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
