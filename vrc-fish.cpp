@@ -143,6 +143,10 @@ void loadConfig() {
 	config.tpl_fish_icon_alt2 = ini.get("vrchat_fish", "tpl_fish_icon_alt2", "fish_icon_alt2.png");
 	config.tpl_player_slider = ini.get("vrchat_fish", "tpl_player_slider", "player_slider.png");
 
+	config.bite_scale_min = ini.getDouble("vrchat_fish", "bite_scale_min", 0.8);
+	config.bite_scale_max = ini.getDouble("vrchat_fish", "bite_scale_max", 1.5);
+	config.bite_scale_step = ini.getDouble("vrchat_fish", "bite_scale_step", 0.1);
+
 	config.fish_scale_1 = ini.getDouble("vrchat_fish", "fish_scale_1", 0.9);
 	config.fish_scale_2 = ini.getDouble("vrchat_fish", "fish_scale_2", 1.0);
 	config.fish_scale_3 = ini.getDouble("vrchat_fish", "fish_scale_3", 1.2);
@@ -384,6 +388,9 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "bite_confirm_frames", config.bite_confirm_frames);
 	setInt("vrchat_fish", "game_end_confirm_frames", config.game_end_confirm_frames);
 	setDbl("vrchat_fish", "bite_threshold", config.bite_threshold);
+	setDbl("vrchat_fish", "bite_scale_min", config.bite_scale_min);
+	setDbl("vrchat_fish", "bite_scale_max", config.bite_scale_max);
+	setDbl("vrchat_fish", "bite_scale_step", config.bite_scale_step);
 	setDbl("vrchat_fish", "minigame_threshold", config.minigame_threshold);
 	setDbl("vrchat_fish", "fish_icon_threshold", config.fish_icon_threshold);
 	setDbl("vrchat_fish", "slider_threshold", config.slider_threshold);

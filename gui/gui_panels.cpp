@@ -250,6 +250,9 @@ static void RenderConfigEditor() {
 	// === Detection Thresholds ===
 	if (ImGui::CollapsingHeader(T("sec_detection"))) {
 		SliderDouble(T("cfg_bite_thresh"), &config.bite_threshold, 0.0f, 1.0f, "%.0f%%", true);
+		SliderDouble(T("cfg_bite_scale_min"), &config.bite_scale_min, 0.5, 2.0, "%.2f");
+		SliderDouble(T("cfg_bite_scale_max"), &config.bite_scale_max, 0.5, 2.0, "%.2f");
+		SliderDouble(T("cfg_bite_scale_step"), &config.bite_scale_step, 0.05, 0.5, "%.2f");
 		SliderDouble(T("cfg_minigame_thresh"), &config.minigame_threshold, 0.0f, 1.0f, "%.0f%%", true);
 		SliderDouble(T("cfg_fish_thresh"), &config.fish_icon_threshold, 0.0f, 1.0f, "%.0f%%", true);
 		SliderDouble(T("cfg_slider_thresh"), &config.slider_threshold, 0.0f, 1.0f, "%.0f%%", true);

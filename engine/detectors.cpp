@@ -11,10 +11,45 @@ using namespace cv;
 
 extern g_config config;
 
+static TplMatch matchBestMultiScale(const Mat& gray, const GrayTpl& tpl,
+	double scaleMin, double scaleMax, double scaleStep) {
+	TplMatch best{};
+	if (tpl.empty() || gray.empty()) return best;
+
+	// If range is degenerate, just do single-scale
+	if (!std::isfinite(scaleMin) || !std::isfinite(scaleMax) || !std::isfinite(scaleStep)
+		|| scaleStep <= 0.0 || scaleMin <= 0.0 || scaleMax <= 0.0 || scaleMin > scaleMax) {
+		return matchBest(gray, tpl);
+	}
+
+	for (double s = scaleMin; s <= scaleMax + 1e-9; s += scaleStep) {
+		GrayTpl scaled{};
+		if (std::abs(s - 1.0) < 1e-6) {
+			scaled.gray = tpl.gray;
+			scaled.mask = tpl.mask;
+		} else {
+			int tw = std::max(1, (int)std::round(tpl.gray.cols * s));
+			int th = std::max(1, (int)std::round(tpl.gray.rows * s));
+			resize(tpl.gray, scaled.gray, Size(tw, th), 0, 0, INTER_AREA);
+			if (!tpl.mask.empty()) {
+				resize(tpl.mask, scaled.mask, Size(tw, th), 0, 0, INTER_NEAREST);
+			}
+		}
+		if (gray.cols < scaled.gray.cols || gray.rows < scaled.gray.rows) continue;
+		TplMatch m = matchBest(gray, scaled);
+		if (m.score > best.score) {
+			best = m;
+		}
+	}
+	return best;
+}
+
 bool detectBite(const Mat& gray, TplMatch* matchOut) {
-	TplMatch m = matchBest(gray, params.tpl_vr_bite_excl_bottom);
+	TplMatch m = matchBestMultiScale(gray, params.tpl_vr_bite_excl_bottom,
+		config.bite_scale_min, config.bite_scale_max, config.bite_scale_step);
 	if (m.score < config.bite_threshold) {
-		TplMatch m2 = matchBest(gray, params.tpl_vr_bite_excl_full);
+		TplMatch m2 = matchBestMultiScale(gray, params.tpl_vr_bite_excl_full,
+			config.bite_scale_min, config.bite_scale_max, config.bite_scale_step);
 		if (m2.score > m.score) {
 			m = m2;
 		}

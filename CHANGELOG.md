@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-03-07
+
+### Added
+- Multi-scale bite detection for exclamation mark (`bite_scale_min`, `bite_scale_max`, `bite_scale_step`) to handle zoom animation and different window resolutions
+
 ## [2.3.0] - 2026-03-06
 
 ### Added

@@ -63,6 +63,10 @@ struct g_config {
 	std::string tpl_fish_icon_alt2;
 	std::string tpl_player_slider;
 
+	double bite_scale_min;
+	double bite_scale_max;
+	double bite_scale_step;
+
 	double fish_scale_1;
 	double fish_scale_2;
 	double fish_scale_3;
