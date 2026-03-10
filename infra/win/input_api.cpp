@@ -132,6 +132,22 @@ void mouseMoveRelative(int dx, int dy, const char* phaseTag) {
 
 // -- OSC UDP sender (VRChat listens on 127.0.0.1:9000) --
 
+// Persistent OSC socket (lazy-init, reused across calls)
+static SOCKET g_oscSocket = INVALID_SOCKET;
+static sockaddr_in g_oscAddr{};
+
+static SOCKET getOscSocket() {
+	if (g_oscSocket == INVALID_SOCKET) {
+		g_oscSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (g_oscSocket != INVALID_SOCKET) {
+			g_oscAddr.sin_family = AF_INET;
+			g_oscAddr.sin_port = htons(9000);
+			inet_pton(AF_INET, "127.0.0.1", &g_oscAddr.sin_addr);
+		}
+	}
+	return g_oscSocket;
+}
+
 bool sendOscInt(const char* path, int value) {
 	// Build minimal OSC message: path (4-byte aligned) + ",i\0\0" + int32 big-endian
 	size_t pathLen = strlen(path) + 1; // include null
@@ -147,32 +163,59 @@ bool sendOscInt(const char* path, int value) {
 	uint32_t be = htonl((uint32_t)value);
 	memcpy(buf.data() + totalPathLen + 4, &be, 4);
 
-	SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	SOCKET sock = getOscSocket();
 	if (sock == INVALID_SOCKET) return false;
 
-	sockaddr_in addr{};
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(9000);
-	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+	int sent = sendto(sock, buf.data(), (int)msgLen, 0, (sockaddr*)&g_oscAddr, sizeof(g_oscAddr));
+	if (sent <= 0) {
+		closesocket(g_oscSocket);
+		g_oscSocket = INVALID_SOCKET;
+		return false;
+	}
+	return true;
+}
 
-	int sent = sendto(sock, buf.data(), (int)msgLen, 0, (sockaddr*)&addr, sizeof(addr));
-	closesocket(sock);
-	return sent > 0;
+void oscResetAll() {
+	sendOscInt("/input/LookLeft", 0);
+	sendOscInt("/input/LookRight", 0);
+	sendOscInt("/input/Jump", 0);
 }
 
 void shakeHeadOSC() {
 	int durationMs = config.osc_shake_duration_ms;
 	if (durationMs <= 0) durationMs = 20;
 
-	sendOscInt("/input/LookRight", 1);
+	// Alternate direction each call to prevent camera drift
+	static int shakeDir = 1;
+	shakeDir *= -1;
+	const char* first  = (shakeDir > 0) ? "/input/LookRight" : "/input/LookLeft";
+	const char* second = (shakeDir > 0) ? "/input/LookLeft"  : "/input/LookRight";
+
+	// Pre-reset
+	for (int i = 0; i < 2; i++) { oscResetAll(); Sleep(10); }
+
+	sendOscInt(first, 1);
 	Sleep(durationMs);
-	sendOscInt("/input/LookRight", 0);
+	sendOscInt(first, 0);
 	Sleep(50);
 
-	sendOscInt("/input/LookLeft", 1);
+	sendOscInt(second, 1);
 	Sleep(durationMs);
-	sendOscInt("/input/LookLeft", 0);
+	sendOscInt(second, 0);
 	Sleep(50);
+
+	// Post-reset
+	for (int i = 0; i < 2; i++) { oscResetAll(); Sleep(10); }
+}
+
+void jumpOSC() {
+	oscResetAll();
+	Sleep(10);
+	sendOscInt("/input/Jump", 1);
+	Sleep(50);
+	sendOscInt("/input/Jump", 0);
+	Sleep(100);
+	oscResetAll();
 }
 
 void keyTapVk(WORD vk, int delayMs) {

@@ -119,6 +119,7 @@ struct g_config {
 	bool debug_console;
 
 	bool osc_head_shake;
+	int osc_anti_afk_mode; // 0=jump, 1=head shake
 	int osc_shake_duration_ms;
 	int osc_shake_after_fails;
 	int osc_shake_post_delay_ms;

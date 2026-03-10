@@ -19,6 +19,8 @@ void mouseLeftClickCentered(int delayMs = 40);
 void mouseMoveRelative(int dx, int dy, const char* phaseTag);
 void keyTapVk(WORD vk, int delayMs = 30);
 
-// OSC head shake via VRChat OSC API (UDP 127.0.0.1:9000)
+// OSC via VRChat OSC API (UDP 127.0.0.1:9000)
 bool sendOscInt(const char* path, int value);
+void oscResetAll();
 void shakeHeadOSC();
+void jumpOSC();

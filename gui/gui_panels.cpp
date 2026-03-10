@@ -220,7 +220,11 @@ static void RenderConfigEditor() {
 		SliderMsAsSeconds(T("cfg_cast_move_step"), &config.cast_mouse_move_step_ms, 5, 200);
 		ImGui::Checkbox(T("cfg_osc_head_shake"), &config.osc_head_shake);
 		if (config.osc_head_shake) {
-			SliderMsAsSeconds(T("cfg_osc_shake_duration"), &config.osc_shake_duration_ms, 5, 200);
+			const char* oscModes[] = { T("cfg_osc_mode_jump"), T("cfg_osc_mode_shake") };
+			ImGui::Combo(T("cfg_osc_mode"), &config.osc_anti_afk_mode, oscModes, 2);
+			if (config.osc_anti_afk_mode == 1) {
+				SliderMsAsSeconds(T("cfg_osc_shake_duration"), &config.osc_shake_duration_ms, 5, 200);
+			}
 			ImGui::InputInt(T("cfg_osc_after_fails"), &config.osc_shake_after_fails);
 			if (config.osc_shake_after_fails < 0) config.osc_shake_after_fails = 0;
 			SliderMsAsSeconds(T("cfg_osc_post_delay"), &config.osc_shake_post_delay_ms, 0, 3000);

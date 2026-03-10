@@ -86,7 +86,7 @@ void loadConfig() {
 
 	config.window_class = ini.get("vrchat_fish", "window_class", "UnityWndClass");
 	config.window_title_contains = ini.get("vrchat_fish", "window_title_contains", "VRChat");
-	config.force_resolution = ini.getInt("vrchat_fish", "force_resolution", 1);
+	config.force_resolution = ini.getInt("vrchat_fish", "force_resolution", 0);
 	config.background_input = ini.getInt("vrchat_fish", "background_input", 1) != 0;
 	config.target_width = ini.getInt("vrchat_fish", "target_width", 1280);
 	config.target_height = ini.getInt("vrchat_fish", "target_height", 960);
@@ -109,7 +109,7 @@ void loadConfig() {
 	config.cleanup_click_interval_ms = ini.getInt("vrchat_fish", "cleanup_click_interval_ms", 150);
 	config.cleanup_reel_key_name = ini.get("vrchat_fish", "cleanup_reel_key", "T");
 	config.cleanup_reel_key = getKeyVal(config.cleanup_reel_key_name);
-	int legacyLootClickDelayMs = ini.getInt("vrchat_fish", "loot_click_delay_ms", 2000);
+	int legacyLootClickDelayMs = ini.getInt("vrchat_fish", "loot_click_delay_ms", 4000);
 	config.cleanup_wait_after_ms = ini.getInt("vrchat_fish", "cleanup_wait_after_ms", legacyLootClickDelayMs);
 	config.bite_confirm_frames = ini.getInt("vrchat_fish", "bite_confirm_frames", 1);
 	config.game_end_confirm_frames = ini.getInt("vrchat_fish", "game_end_confirm_frames", 5);
@@ -196,9 +196,10 @@ void loadConfig() {
 	config.vr_log_file = ini.get("vrchat_fish", "vr_log_file", "data/logs/log.csv");
 	config.vr_log_enabled = ini.getInt("vrchat_fish", "vr_log_enabled", 0);
 	config.debug_console = ini.getInt("vrchat_fish", "debug_console", 0);
-	config.osc_head_shake = ini.getInt("vrchat_fish", "osc_head_shake", 0) != 0;
+	config.osc_head_shake = ini.getInt("vrchat_fish", "osc_head_shake", 1) != 0;
+	config.osc_anti_afk_mode = ini.getInt("vrchat_fish", "osc_anti_afk_mode", 1);
 	config.osc_shake_duration_ms = ini.getInt("vrchat_fish", "osc_shake_duration_ms", 20);
-	config.osc_shake_after_fails = ini.getInt("vrchat_fish", "osc_shake_after_fails", 1);
+	config.osc_shake_after_fails = ini.getInt("vrchat_fish", "osc_shake_after_fails", 0);
 	config.osc_shake_post_delay_ms = ini.getInt("vrchat_fish", "osc_shake_post_delay_ms", 500);
 	config.gui_preview_enabled = ini.getInt("gui", "preview_enabled", 1);
 	config.gui_preview_boxes = ini.getInt("gui", "preview_boxes", 1);
@@ -449,6 +450,7 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "vr_log_enabled", config.vr_log_enabled ? 1 : 0);
 	setInt("vrchat_fish", "debug_console", config.debug_console ? 1 : 0);
 	setInt("vrchat_fish", "osc_head_shake", config.osc_head_shake ? 1 : 0);
+	setInt("vrchat_fish", "osc_anti_afk_mode", config.osc_anti_afk_mode);
 	setInt("vrchat_fish", "osc_shake_duration_ms", config.osc_shake_duration_ms);
 	setInt("vrchat_fish", "osc_shake_after_fails", config.osc_shake_after_fails);
 	setInt("vrchat_fish", "osc_shake_post_delay_ms", config.osc_shake_post_delay_ms);
@@ -694,11 +696,18 @@ void fishVrchat() {
 				castMouseMoveDx = 0;
 				castMouseMoveDy = 0;
 			}
-			if (config.osc_head_shake && consecutiveFails > config.osc_shake_after_fails) {
-				shakeHeadOSC();
-				if (config.vr_debug) {
-					LOG_DEBUG("[vrchat_fish] OSC head shake (fails=%d, threshold=%d, duration=%dms)",
-						consecutiveFails, config.osc_shake_after_fails, config.osc_shake_duration_ms);
+			if (config.osc_head_shake && consecutiveFails >= config.osc_shake_after_fails) {
+				if (config.osc_anti_afk_mode == 0) {
+					jumpOSC();
+					if (config.vr_debug) {
+						LOG_DEBUG("[vrchat_fish] OSC jump anti-AFK (fails=%d)", consecutiveFails);
+					}
+				} else {
+					shakeHeadOSC();
+					if (config.vr_debug) {
+						LOG_DEBUG("[vrchat_fish] OSC head shake (fails=%d, duration=%dms)",
+							consecutiveFails, config.osc_shake_duration_ms);
+					}
 				}
 				if (config.osc_shake_post_delay_ms > 0) {
 					sleepWithPause(config.osc_shake_post_delay_ms);
