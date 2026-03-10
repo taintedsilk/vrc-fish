@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.1] - 2026-03-11
+
+### Fixed
+- Raised `minigame_threshold` default from 0.7 to 0.75 to prevent false-positive track detection on the fishing rod/scenery
+
+### Changed
+- README.md is now English (main), Chinese moved to README.zh.md
+- Updated Quick Start and docs to reflect GUI workflow, F9 hotkey, background input, and OSC anti-AFK
+
 ## [2.4.0] - 2026-03-11
 
 ### Changed
