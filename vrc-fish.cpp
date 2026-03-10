@@ -1423,6 +1423,19 @@ void fishVrchat() {
 						wantHold = (costPress < costRelease);
 					}
 
+					// ── Miss recovery override ──
+					// After tracking loss, reactive override can't trigger (no prev deviation).
+					// If fish is far from slider, immediately move toward it.
+					if (wasLongMiss) {
+						double deviation = (double)(fishY - sliderCY);
+						double absDev = abs(deviation);
+						double devThreshold = (double)sliderH * config.reactive_dev_ratio;
+						if (devThreshold < 10.0) devThreshold = 10.0;
+						if (absDev > devThreshold) {
+							wantHold = (deviation < 0); // fish above → hold (up), fish below → release (down)
+						}
+					}
+
 					// ── 方向D：偏差快速响应 ──
 					// 当鱼与滑块偏差大且在快速增长时，直接覆盖MPC决策
 					bool reactiveTriggered = false;

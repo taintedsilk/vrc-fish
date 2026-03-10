@@ -2,7 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.4.1] - 2026-03-11
+## [2.5.0] - 2026-03-11
+
+### Added
+- Miss recovery override: after tracking loss, immediately moves slider toward fish instead of waiting for deviation growth data
 
 ### Changed
 - Full README rewrite (EN + ZH) reflecting current GUI-based workflow
