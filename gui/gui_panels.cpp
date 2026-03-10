@@ -314,9 +314,8 @@ static void RenderConfigEditor() {
 
 	// === Physics / MPC ===
 	if (ImGui::CollapsingHeader(T("sec_physics"))) {
-		InputDouble(T("cfg_gravity"), &config.bb_gravity, 0.1f, 0.5f, "%.2f");
-		InputDouble(T("cfg_thrust"), &config.bb_thrust, 0.1f, 0.5f, "%.2f");
-		SliderDouble(T("cfg_drag"), &config.bb_drag, 0.5f, 1.0f, "%.3f");
+		SliderDouble(T("cfg_gravity"), &config.bb_gravity, 0.1f, 5.0f, "%.2f");
+		SliderDouble(T("cfg_thrust"), &config.bb_thrust, 0.1f, 5.0f, "%.2f");
 		ImGui::SliderInt(T("cfg_horizon"), &config.bb_sim_horizon, 1, 30);
 		SliderDouble(T("cfg_margin"), &config.bb_margin_ratio, 0.0f, 0.45f, "%.0f%%", true);
 		InputDouble(T("cfg_boundary_zone"), &config.bb_boundary_zone, 5.0f, 10.0f, "%.0f");
@@ -326,9 +325,6 @@ static void RenderConfigEditor() {
 
 	// === Fish Prediction ===
 	if (ImGui::CollapsingHeader(T("sec_fish_predict"))) {
-		bool fishBounce = config.fish_bounce_predict != 0;
-		if (ImGui::Checkbox(T("cfg_bounce"), &fishBounce))
-			config.fish_bounce_predict = fishBounce ? 1 : 0;
 		SliderDouble(T("cfg_accel_alpha"), &config.fish_accel_alpha, 0.0f, 1.0f, "%.0f%%", true);
 		SliderDouble(T("cfg_vel_decay"), &config.fish_vel_decay, 0.0f, 1.0f, "%.0f%%", true);
 		InputDouble(T("cfg_accel_cap"), &config.fish_accel_cap, 1.0f, 5.0f, "%.1f");

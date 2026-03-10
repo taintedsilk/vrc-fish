@@ -42,9 +42,9 @@ struct g_config {
 	double velocity_ema_alpha;
 	int slider_bright_thresh;
 	int slider_min_height;
-	double bb_gravity;
-	double bb_thrust;
-	double bb_drag;
+	double bb_gravity;  // multiplier on game gravity (1.0 = game-accurate)
+	double bb_thrust;   // multiplier on game thrust (1.0 = game-accurate)
+	double bb_drag;     // deprecated (game has no drag), kept for config compat
 	int bb_sim_horizon;
 	double bb_margin_ratio;
 	double bb_boundary_zone;

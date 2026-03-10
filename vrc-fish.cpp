@@ -44,6 +44,11 @@
 using namespace std;
 using namespace cv;
 
+// VRChat fishing minigame physics constants (normalized [0,1] space)
+static constexpr double GAME_GRAVITY      = 1.25;   // units/s^2, pulls slider down
+static constexpr double GAME_PLAYER_SPEED = 3.75;   // units/s^2, pushes slider up when held
+static constexpr double GAME_BOUNCE       = 0.3;    // wall bounce factor (30% velocity reversal)
+
 // GUI shared state
 FishingStatus g_fishStatus;
 FishingCommand g_fishCmd;
@@ -121,9 +126,10 @@ void loadConfig() {
 	config.velocity_ema_alpha = ini.getDouble("vrchat_fish", "velocity_ema_alpha", 0.9);
 	config.slider_bright_thresh = ini.getInt("vrchat_fish", "slider_bright_thresh", 200);
 	config.slider_min_height = ini.getInt("vrchat_fish", "slider_min_height", 15);
-	config.bb_gravity = ini.getDouble("vrchat_fish", "bb_gravity", 1.4);
-	config.bb_thrust = ini.getDouble("vrchat_fish", "bb_thrust", -2.8);
-	config.bb_drag = ini.getDouble("vrchat_fish", "bb_drag", 1.0);
+	config.bb_gravity = ini.getDouble("vrchat_fish", "bb_gravity", 1.0); // multiplier on GAME_GRAVITY
+	config.bb_thrust = ini.getDouble("vrchat_fish", "bb_thrust", 1.0);  // multiplier on GAME_PLAYER_SPEED
+	if (config.bb_thrust < 0.0) config.bb_thrust = 1.0; // migration: old configs had negative raw value
+	config.bb_drag = ini.getDouble("vrchat_fish", "bb_drag", 1.0); // deprecated, unused
 	config.bb_sim_horizon = ini.getInt("vrchat_fish", "bb_sim_horizon", 8);
 	config.bb_margin_ratio = ini.getDouble("vrchat_fish", "bb_margin_ratio", 0.25);
 	config.bb_boundary_zone = ini.getDouble("vrchat_fish", "bb_boundary_zone", 80.0);
@@ -181,7 +187,7 @@ void loadConfig() {
 	config.fish_velocity_cap = ini.getDouble("vrchat_fish", "fish_velocity_cap", 15.0);
 	config.base_dt_ms = ini.getDouble("vrchat_fish", "base_dt_ms", 50.0);
 
-	config.fish_bounce_predict = ini.getInt("vrchat_fish", "fish_bounce_predict", 1);
+	config.fish_bounce_predict = ini.getInt("vrchat_fish", "fish_bounce_predict", 0); // game has no fish bounce
 	config.fish_accel_alpha = ini.getDouble("vrchat_fish", "fish_accel_alpha", 0.9);
 	config.fish_vel_decay = ini.getDouble("vrchat_fish", "fish_vel_decay", 0.2);
 	config.fish_accel_cap = ini.getDouble("vrchat_fish", "fish_accel_cap", 10.0);
@@ -1302,20 +1308,32 @@ void fishVrchat() {
 						lastCtrlLogMs = t;
 					}
 				} else {
-					// ══ MPC 控制器：轨迹模拟 + 选择最优动作 ══
+					// ══ MPC controller: game-accurate trajectory simulation ══
 					//
-					// 物理模型（每步）:
-					//   velocity = velocity * drag + (pressing ? thrust : gravity)
-					//   position += velocity
+					// Game physics (per step, dt seconds):
+					//   vel += GRAVITY * trackHeight * dt        (down, positive Y)
+					//   if held: vel -= PLAYER_SPEED * trackHeight * dt  (up, negative Y)
+					//   pos += vel * dt
+					//   on wall: vel *= -BOUNCE (0.3)
 					//
-					// 每帧模拟两条轨迹（按住 vs 松开），选择使鱼
-					// 留在滑块安全区内时间更长的那个动作
+					// Simulates two trajectories (hold vs release), picks the action
+					// that keeps the fish inside the slider safe zone longest.
 
-					double gravity = config.bb_gravity;     // 正值，向下
-					double thrust  = config.bb_thrust;      // 负值，向上
-					double drag    = config.bb_drag;
-					if (drag < 0.5) drag = 0.5;
-					if (drag > 1.0) drag = 1.0;
+					double trackPadY = (double)std::max(0, config.track_pad_y);
+					double trackHeightPx = (double)fixedTrackRoi.height - 2.0 * trackPadY;
+					if (trackHeightPx < 1.0) trackHeightPx = 1.0;
+					double dt_step = baseDtMs / 1000.0; // seconds per simulation step
+
+					// Game constants scaled to pixel space, with user multipliers
+					double gravMult = config.bb_gravity;
+					if (gravMult < 0.1) gravMult = 0.1;
+					if (gravMult > 5.0) gravMult = 5.0;
+					double thrustMult = config.bb_thrust;
+					if (thrustMult < 0.1) thrustMult = 0.1;
+					if (thrustMult > 5.0) thrustMult = 5.0;
+					double gravity_px = GAME_GRAVITY * trackHeightPx * gravMult;
+					double playerSpeed_px = GAME_PLAYER_SPEED * trackHeightPx * thrustMult;
+
 					int horizon = config.bb_sim_horizon;
 					if (horizon < 1) horizon = 1;
 					if (horizon > 30) horizon = 30;
@@ -1325,80 +1343,61 @@ void fishVrchat() {
 					if (marginRatio > 0.45) marginRatio = 0.45;
 					double margin = sliderH * marginRatio;
 
-					// 模拟一条轨迹，返回累积代价（越小越好）
-					// 代价 = sum of (鱼到安全区中心的距离 if 在区外, 0 if 在区内)
 					double fishVelDecay = config.fish_vel_decay;
 					if (fishVelDecay < 0.5) fishVelDecay = 0.5;
 					if (fishVelDecay > 1.0) fishVelDecay = 1.0;
-					bool fishBounce = (config.fish_bounce_predict != 0);
 
 					auto simCost = [&](bool press) -> double {
-						double sVel = smoothVelocity;   // 滑块当前速度
-						double sCY  = (double)sliderCY; // 滑块中心 Y
-						double fY   = (double)fishY;    // 鱼 Y
-						double fVel = smoothFishVel;    // 鱼速度
-						double fAcc = smoothFishAccel;  // 鱼加速度
+						// Convert from px/frame to px/s for game-accurate simulation
+						double sVel = smoothVelocity / dt_step;
+						double sCY  = (double)sliderCY;
+						double fY   = (double)fishY;
+						double fVel = smoothFishVel / dt_step;
+						double fAcc = smoothFishAccel / (dt_step * dt_step);
 						double cost = 0.0;
 
-						// 轨道物理边界（固定ROI上下各扩展 padY 用于检测，这里扣回）
-						// 滑块中心碰到物理边界即触发反弹
-						double trackPadY = (double)std::max(0, config.track_pad_y);
 						double trackCYMin = (double)fixedTrackRoi.y + trackPadY;
 						double trackCYMax = (double)(fixedTrackRoi.y + fixedTrackRoi.height) - trackPadY;
 						if (trackCYMin > trackCYMax) trackCYMin = trackCYMax = (trackCYMin + trackCYMax) / 2.0;
 
 						for (int step = 0; step < horizon; step++) {
-							// 滑块物理更新
-							double accel = press ? thrust : gravity;
-							sVel = sVel * drag + accel;
-							sCY += sVel;
+							// Slider physics (game-accurate)
+							sVel += gravity_px * dt_step;
+							if (press) sVel -= playerSpeed_px * dt_step;
+							sCY += sVel * dt_step;
 
-							// 轨道边界反弹：碰壁后速度反向
+							// Wall bounce: velocity *= -0.3
 							if (sCY < trackCYMin) {
 								sCY = trackCYMin;
-								sVel = -sVel * 0.8; // 反弹，损失部分动能
+								sVel = -sVel * GAME_BOUNCE;
 							} else if (sCY > trackCYMax) {
 								sCY = trackCYMax;
-								sVel = -sVel * 0.8;
+								sVel = -sVel * GAME_BOUNCE;
 							}
 
-							// ── 方向A：鱼位置更新（加速度预测 + 速度衰减 + 边界反弹） ──
-							fVel += fAcc;                  // 加速度影响速度
-							fVel *= fishVelDecay;          // 远期速度逐步衰减（不确定性增大）
-							fY += fVel;
+							// Fish prediction (velocity extrapolation, no bounce, just clamp)
+							fVel += fAcc * dt_step;
+							fVel *= fishVelDecay;
+							fY += fVel * dt_step;
 
-							// 鱼碰轨道边界反弹
-							if (fishBounce) {
-								if (fY < trackCYMin) {
-									fY = trackCYMin;
-									fVel = -fVel * 0.5;
-									fAcc = 0.0; // 反弹后加速度失效
-								} else if (fY > trackCYMax) {
-									fY = trackCYMax;
-									fVel = -fVel * 0.5;
-									fAcc = 0.0;
-								}
-							}
+							if (fY < trackCYMin) fY = trackCYMin;
+							if (fY > trackCYMax) fY = trackCYMax;
 
-							// 滑块边界
+							// Cost: distance of fish from slider safe zone
 							double halfH = (double)sliderH / 2.0;
 							double sTop = sCY - halfH + margin;
 							double sBot = sCY + halfH - margin;
 
-							// 代价：鱼偏离安全区的程度
 							if (sTop >= sBot) {
-								// 滑块太短，按中心距离算代价
 								cost += abs(fY - sCY);
 							} else if (fY < sTop) {
 								cost += (sTop - fY);
 							} else if (fY > sBot) {
 								cost += (fY - sBot);
 							}
-							// 在安全区内 → cost += 0
 						}
 
-						// 边界减速惩罚：滑块以较高速度接近轨道边界时施加额外代价
-						// 目的：让 MPC 主动选择提前制动，避免高速碰壁后剧烈反弹
+						// Boundary deceleration penalty
 						double bZone   = config.bb_boundary_zone;
 						double bWeight = config.bb_boundary_weight;
 						if (bZone > 0.0 && bWeight > 0.0) {
@@ -1406,8 +1405,8 @@ void fishVrchat() {
 							double distBot = trackCYMax - sCY;
 							double distMin = distTop < distBot ? distTop : distBot;
 							if (distMin < bZone) {
-								double penetration = (bZone - distMin) / bZone; // 0~1，越靠近惩罚越大
-								cost += abs(sVel) * penetration * bWeight;
+								double penetration = (bZone - distMin) / bZone;
+								cost += abs(sVel * dt_step) * penetration * bWeight;
 							}
 						}
 						return cost;

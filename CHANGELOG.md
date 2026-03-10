@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-03-11
+
+### Changed
+- MPC controller rewritten with game-accurate physics (gravity=1.25, thrust=3.75, bounce=0.3, proper deltaTime scaling)
+- `bb_gravity` and `bb_thrust` are now multipliers on game constants (1.0 = game-accurate) instead of raw pixel values
+- Old negative `bb_thrust` values auto-migrate to 1.0
+- Removed drag from physics simulation (game has no drag)
+- Removed fish bounce prediction (game clamps fish at walls, no bounce)
+- GUI: gravity/thrust changed to multiplier sliders [0.1, 5.0], removed drag slider and bounce checkbox
+
 ## [2.3.1] - 2026-03-07
 
 ### Added
