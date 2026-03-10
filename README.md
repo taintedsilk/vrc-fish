@@ -51,9 +51,7 @@
 
 ## Overview
 
-A small Windows tool that assists the VRChat fishing minigame by detecting key UI elements (OpenCV template matching / brightness-based detection) and controlling the minigame via <kbd>Left Mouse Button</kbd> press/release.
-
-This repository currently focuses on the fishing logic, parameters, and experimental scripts for the **VRChat world FISHǃ**.
+A Windows tool that automates the VRChat fishing minigame using OpenCV template matching, brightness-based detection, and a game-accurate physics MPC controller. Everything is controlled through a Dear ImGui GUI — no manual config file editing required.
 
 ## Demo Video
 
@@ -63,24 +61,34 @@ This repository currently focuses on the fishing logic, parameters, and experime
 
 ## Features
 
-- Fully automated loop: cast → wait for bite → hook → control minigame → cleanup → next round
-- Dear ImGui + DirectX11 GUI with live capture preview, log panel, and full config editor
-- Multi-language support (English / Chinese / Japanese)
-- Detection:
-  - `matchTemplate`: bite prompt (multi-scale), minigame track, fish icon(s), slider template (fallback)
-  - Brightness-based slider boundary detection on the track column (primary)
-- Control: game-accurate physics model + MPC (Model Predictive Control) to decide hold/release
-- Background input mode: fish without losing mouse/keyboard control
-- OSC anti-AFK: jump or head shake mode via VRChat OSC API to prevent going AFK
-- Optional ML workflow: record data / inference mode + analysis & fitting scripts
+- **Fully automated loop**: cast → wait for bite → hook → control minigame → cleanup → next round
+- **GUI**: Dear ImGui + DirectX11 window with:
+  - Status bar (connection state, fishing state, catch count)
+  - Start/Stop, Pause/Resume, Connect Window buttons
+  - Full config editor with collapsible sections (50+ parameters)
+  - Color-coded scrollable log panel
+  - Live capture preview with optional detection bounding boxes
+  - All settings adjustable live, saved with one click
+- **Multi-language**: English / Chinese / Japanese (switchable in GUI)
+- **Detection**:
+  - Multi-scale template matching for bite exclamation mark, minigame track, fish icon(s), slider (fallback)
+  - Brightness-based slider boundary detection (primary)
+  - Multi-scale + angle search for track locking
+- **Control**: game-accurate physics simulation (gravity 1.25, thrust 3.75, bounce 0.3) + MPC to decide hold/release, with reactive override for fast fish movement
+- **Background input**: enabled by default — fish without losing mouse/keyboard control (uses `PostMessage`)
+- **OSC anti-AFK**: head shake or jump mode via VRChat OSC API (UDP 127.0.0.1:9000) to prevent the FISHǃ world's AFK detection
+- **Auto-recovery**: minigame verification with auto-recast on failed hook, bite autopull fallback, static detection timeout
+- **Randomized cast movement**: configurable offset, random range, smooth multi-step mouse movement
+- **F9 global hotkey** to toggle start/stop
+- **Optional ML workflow**: record data / inference mode + analysis & fitting scripts
 
 ## Target World
 
-This project is mainly tuned for **FISHǃ**:
+This project is tuned for **FISHǃ**:
 - World URL: https://vrchat.com/home/world/wrld_ae001ea3-ed05-42f0-adf2-3d47efd10a77
 - World ID: `wrld_ae001ea3-ed05-42f0-adf2-3d47efd10a77`
 
-Templates, thresholds, and ROIs are calibrated for the current UI of this world. If the world/UI updates, re-capture templates under `Resource-VRChat/` and adjust `config.ini`.
+The bundled templates under `Resource-VRChat/` and default thresholds are calibrated for this world's UI. If the world updates its UI, you may need to re-capture templates and adjust thresholds.
 
 ## Download
 
@@ -88,65 +96,59 @@ Head to the [Releases](https://github.com/abligail/vrc-fish/releases) page to do
 
 ## Quick Start
 
-1. In VRChat display/graphics settings, set the resolution to `1280×960` (matches the default templates in this repo).
-2. Enter **FISHǃ** in VRChat, make sure you are ready to fish and the fishing UI is visible.
-3. After casting, choose a position/view so that the bite indicator (the dot at the bottom of the exclamation mark) and the full minigame slider track are visible on screen (not cropped/occluded).
-4. Run `vrc-fish.exe`. A GUI window will open with status, controls, config editor, log panel, and live capture preview.
-5. Click **Connect Window** to attach to VRChat, then click **Start Fishing** (or press <kbd>F9</kbd>) to begin. Use **Pause**/**Resume** buttons to pause mid-session.
-6. All settings can be adjusted live in the GUI config panel and saved with the **Save Config** button.
+1. **(Optional)** In VRChat display/graphics settings, set the resolution to `1280×960` for best template matching accuracy. Other resolutions work but may need threshold tuning.
+2. Enter **FISHǃ** in VRChat. Make sure you are at a fishing spot and the fishing UI is visible.
+3. After casting, choose a position/view so that the bite indicator (exclamation mark) and the full minigame slider track are visible on screen (not cropped or occluded).
+4. Run `vrc-fish.exe`. The GUI window opens with status bar, controls, config editor, log panel, and live capture preview.
+5. Click **Connect Window** to attach to VRChat, then click **Start Fishing** (or press <kbd>F9</kbd>) to begin.
+6. Use **Pause**/**Resume** to pause mid-session. All settings can be adjusted live in the GUI and saved with the **Save Config** button.
 
 Notes:
-- The project enables `RequireAdministrator` by default, so the app may require admin privileges.
-- **Background input** is enabled by default—you can use your mouse/keyboard normally while the bot runs.
-- The app reads `config.ini` from the current working directory and loads templates from `resource_dir` (default `Resource-VRChat/`). Run it from the repo root, or copy `config.ini` and `Resource-VRChat/` next to the executable.
-- OSC anti-AFK (head shake or jump) is enabled by default to prevent VRChat from kicking you for inactivity.
+- The app may require **admin privileges** (manifest has `RequireAdministrator`).
+- **Background input** is enabled by default — you can use your mouse and keyboard normally while the bot runs.
+- `config.ini` is auto-created with defaults on first run if it doesn't exist. The app loads it from the current working directory alongside `Resource-VRChat/`.
+- **OSC anti-AFK** (head shake) is enabled by default to prevent the FISHǃ world's AFK detection from triggering.
 
 ## Tuning & Adaptation
 
-The bundled templates and default parameters are based on my own fishing spot (the **end of the wooden pier at Coconut Bay**, the starting island, with an avatar height of **1.1 m**). The current parameters can already reliably catch the vast majority of fish. Further optimizations are welcome!
+The bundled templates and defaults are based on the **end of the wooden pier at Coconut Bay** (starting island), with an avatar height of **1.1 m**. The defaults already reliably catch the vast majority of fish.
 
-> **Tip**: It is recommended to first go to the same spot described above (end of the wooden pier at Coconut Bay, avatar height ~1.1 m) to verify that the program works correctly in your environment before trying other locations.
+> **Tip**: First try the same spot described above to verify everything works in your environment, then adjust for other locations.
 
-If detection is not working well in your setup, adjust in the following priority:
+If detection is not working well, adjust in the following priority. All settings below can be changed directly in the **GUI config panel** — no need to edit `config.ini` manually.
 
 ### 1. Adjust Track Template Scale Range (Most Common)
 
-Different positions, avatar heights, fishing rods, and resolution/UI scaling will cause the slider track to appear at different sizes on screen. The program uses multi-scale template matching to handle this. The relevant parameters are:
+Different positions, avatar heights, fishing rods, and resolution/UI scaling cause the slider track to appear at different sizes on screen. The program uses multi-scale template matching to handle this. The relevant settings are:
 
-```ini
-track_scale_min=0.8
-track_scale_max=2
-track_scale_step=0.2
-```
+- **Track Scale Min** (default 0.8)
+- **Track Scale Max** (default 2.0)
+- **Track Scale Step** (default 0.2)
 
-**How to adjust**: Run the program with `debug=1` and watch the log panel for the `scale` value printed when the track is successfully matched (e.g. `scale=1.4`). Once you know the approximate scale range for your setup, narrow the search range around that value and reduce the step size for better precision. For example, if you observe scale values around `1.2~1.6`, set:
+**How to adjust**: Enable **Debug** in the GUI and watch the log panel for the `scale` value when the track is matched (e.g. `scale=1.4`). Narrow the range around your observed value and reduce the step for better precision. For example, if you see scales around `1.2~1.6`:
 
-```ini
-track_scale_min=1.0
-track_scale_max=1.8
-track_scale_step=0.1
-```
+- Track Scale Min → 1.0
+- Track Scale Max → 1.8
+- Track Scale Step → 0.1
 
-- If the matched scale is close to `track_scale_min` or `track_scale_max`, the search range may be too narrow—expand it in the corresponding direction.
-- A smaller `track_scale_step` gives more accurate matching but increases computation. Usually `0.1~0.2` is sufficient.
+If the matched scale is near the min/max boundary, expand the range. A smaller step is more precise but slower — `0.1~0.2` is usually sufficient.
 
 ### 2. Keep the Slider Track as Vertical as Possible
 
-The program assumes the slider track is roughly vertical on screen. If your position/view angle causes noticeable tilt, there are two approaches:
+The program assumes the track is roughly vertical. If your view angle causes noticeable tilt:
 
-- **Recommended**: Adjust your in-game position or camera angle so the fishing track appears as vertical as possible on screen.
-- **Compensate via config**: Enable angle search parameters to let the program detect small rotations automatically:
-  ```ini
-  track_angle_min=-5.0
-  track_angle_max=5.0
-  track_angle_step=1.0
-  ```
-  You can check the `angle` value in the log output to confirm the actual tilt, then narrow the range and reduce the step size for better accuracy. Note that angle search multiplies computation cost, so only enable it when needed.
+- **Recommended**: Adjust your in-game position or camera angle so the track appears vertical.
+- **Compensate via settings**: Enable angle search in the GUI:
+  - Track Angle Min → -5.0
+  - Track Angle Max → 5.0
+  - Track Angle Step → 1.0
+
+  Check the `angle` value in the log to confirm, then narrow the range. Angle search multiplies computation cost, so only enable when needed.
 
 ### 3. Other Adjustments
 
-- **Lots of "miss" in the logs**: If tuning scale/angle doesn't help enough, the most effective fix is to take your own screenshots at your fishing spot, crop the UI elements, and replace the images in `Resource-VRChat/`. You can also tweak matching thresholds (`bite_threshold`, `fish_icon_threshold`, etc.) in `config.ini`.
-- **Different PC / display environments**: Detection accuracy is sensitive to screen resolution and rendering settings. You may need to adjust thresholds and control parameters for your specific setup.
+- **Frequent "miss" in logs**: The most effective fix is to screenshot your own fishing spot, crop the UI elements, and replace the images in `Resource-VRChat/`. You can also adjust matching thresholds (Bite Threshold, Fish Icon Threshold, etc.) in the GUI.
+- **Different PC / display environments**: Detection is sensitive to screen resolution and rendering settings. Thresholds and control parameters may need adjustment for your setup.
 
 ## Build
 
@@ -155,45 +157,52 @@ The program assumes the slider track is roughly vertical on screen. If your posi
 3. Build `vrc-fish.exe`
 
 Dependencies:
-- OpenCV 4.6.0: headers/libs are organized under `include/` + `lib/`, and the runtime `opencv_*460.dll` should be placed next to the executable (the repo root already includes these DLLs).
-- For VS Code, see `.vscode/tasks.json` (`Build Release`) and adjust paths for your local VS installation.
-- Make sure the runtime can locate `config.ini` and `Resource-VRChat/` (set the working directory to the repo root, or copy required files to your output folder).
+- OpenCV 4.6.0: headers/libs under `include/` + `lib/`, runtime DLLs (`opencv_*460.dll`) next to the executable (included in repo root).
+- Make sure the runtime can locate `config.ini` and `Resource-VRChat/` (set working directory to repo root, or copy them next to the executable).
 
 ## Configuration
 
-Config file: `config.ini`
+All settings can be edited live in the **GUI config panel** and saved with the **Save Config** button. Settings are persisted to `config.ini`.
 
-| Section | Key | Description |
+For reference, the key settings and their config file keys:
+
+| Category | Key | Description |
 |---|---|---|
-| `common` | `is_pause` | Start paused on launch (1=on) |
-| `vrchat_fish` | `window_class` / `window_title_contains` | VRChat window matching (default `UnityWndClass` + title contains `VRChat`) |
-| `vrchat_fish` | `force_resolution` / `target_width` / `target_height` | Force VRChat client-area resolution |
-| `vrchat_fish` | `background_input` | Background input mode (1=on), fish without losing mouse control |
-| `vrchat_fish` | `capture_interval_ms` / `control_interval_ms` | Capture polling and control loop intervals |
-| `vrchat_fish` | `cast_mouse_move_dx` / `cast_mouse_move_dy` | Post-cast mouse offset (e.g. slight rightward move); reversed at end of round |
-| `vrchat_fish` | `osc_head_shake` / `osc_anti_afk_mode` | OSC anti-AFK (0=jump, 1=head shake) via VRChat OSC API |
-| `vrchat_fish` | `bite_threshold` / `minigame_threshold` / `fish_icon_threshold` / `slider_threshold` | Template matching thresholds (0–1) |
-| `vrchat_fish` | `track_scale_*` / `track_angle_*` | Track template scale/rotation search parameters |
-| `vrchat_fish` | `bb_gravity` / `bb_thrust` | MPC physics multipliers (1.0 = game-accurate), tweak to adjust control feel |
-| `vrchat_fish` | `cleanup_*` / `cleanup_reel_key` | Post-catch cleanup: wait, click count, reel key, etc. |
-| `vrchat_fish` | `ml_mode` / `ml_record_csv` / `ml_weights_file` | 0=auto, 1=record, 2=ML inference |
-| `vrchat_fish` | `debug` / `debug_pic` / `debug_dir` / `vr_log_file` | Debug output, screenshots, and CSV logging |
+| Window | `window_class` / `window_title_contains` | VRChat window matching |
+| Window | `force_resolution` / `target_width` / `target_height` | Optional: force VRChat client-area resolution |
+| Window | `background_input` | Background input via PostMessage (default: on) |
+| Timing | `capture_interval_ms` / `control_interval_ms` | Capture and control loop intervals |
+| Cast | `cast_mouse_move_dx/dy` | Post-cast mouse offset (reversed at end of round) |
+| Cast | `cast_mouse_move_random_range` | Random ± pixel range added to cast offset |
+| Cast | `cast_mouse_move_duration_ms` / `cast_mouse_move_step_ms` | Smooth multi-step movement timing |
+| Anti-AFK | `osc_head_shake` / `osc_anti_afk_mode` | OSC anti-AFK (0=jump, 1=head shake) |
+| Anti-AFK | `osc_shake_after_fails` | Trigger after N consecutive failed casts |
+| Detection | `bite_threshold` / `minigame_threshold` / `fish_icon_threshold` / `slider_threshold` | Template matching confidence thresholds (0–1) |
+| Detection | `bite_scale_min/max/step` | Multi-scale bite exclamation search range |
+| Detection | `track_scale_min/max/step` / `track_angle_min/max/step` | Track template scale and rotation search |
+| Physics | `bb_gravity` / `bb_thrust` | MPC physics multipliers (1.0 = game-accurate) |
+| Physics | `bb_sim_horizon` | MPC forward simulation steps |
+| Cleanup | `cleanup_wait_before_ms` / `cleanup_click_count` / `cleanup_reel_key` / `cleanup_wait_after_ms` | Post-catch cleanup sequence |
+| Recovery | `bite_autopull` / `bite_autopull_ms` | Auto-pull fallback if no bite detected |
+| Recovery | `minigame_verify_timeout_ms` | Recast if minigame doesn't appear within timeout |
+| ML | `ml_mode` | 0=MPC auto, 1=record data, 2=ML inference |
+| Debug | `debug` / `debug_pic` / `debug_dir` / `vr_log_file` | Logging, screenshots, CSV output |
 
 Templates:
-- Default directory: `Resource-VRChat/` (override via `tpl_*` keys)
-- Fish icons: auto-loads `fish_icon_alt*.png` (e.g. `fish_icon_alt3.png`) without requiring config entries
+- Default directory: `Resource-VRChat/`
+- Fish icons: auto-loads `fish_icon_alt*.png` without config entries
 
 ## Logging & Debugging
 
-- All log output is shown in the GUI log panel in real time
-- `debug=1`: enables verbose logging (scores, state transitions, control info)
-- `debug_pic=1`: saves key-frame screenshots under `debug_dir`
-- `debug_console=1`: opens a separate console window for raw log output
-- `vr_log_file`: appends runtime logs to a CSV file (see examples under `data/logs/`)
+- All log output is shown in the **GUI log panel** in real time (color-coded by level)
+- **Debug** toggle in GUI: enables verbose logging (scores, state transitions, control info)
+- **Debug Pic**: saves key-frame screenshots under the debug directory
+- **Debug Console**: opens a separate console window for raw log output
+- **CSV Log**: appends runtime data to a log file (see `data/logs/` for examples)
 
 ## Experimental Scripts (Optional)
 
-Scripts live in `scripts/`:
+Scripts in `scripts/`:
 
 - `fit_physics.py`: fit slider physics parameters from debug logs
 - `analyze_log.py` / `analyze_oscillation.py`: analyze overshoot/oscillation behavior
@@ -201,11 +210,11 @@ Scripts live in `scripts/`:
 
 ## Project Layout
 
-- `vrc-fish.cpp`: main app (capture, detection, state machine, control, cleanup)
-- `gui/`: Dear ImGui GUI (panels, config editor, preview)
+- `vrc-fish.cpp`: main app (capture, detection, state machine, MPC control, cleanup)
+- `gui/`: Dear ImGui GUI (panels, config editor, preview, logger)
 - `infra/`: platform layer (input simulation, OSC communication)
 - `lang/`: translation files (en/zh/ja)
-- `config.ini`: configuration
+- `config.ini`: configuration (auto-created on first run)
 - `Resource-VRChat/`: UI templates for FISHǃ
 - `data/`: logs, sample data, ML weights
 - `scripts/`: analysis / fitting / training utilities

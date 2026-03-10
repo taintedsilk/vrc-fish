@@ -119,7 +119,7 @@ void loadConfig() {
 	config.bite_confirm_frames = ini.getInt("vrchat_fish", "bite_confirm_frames", 1);
 	config.game_end_confirm_frames = ini.getInt("vrchat_fish", "game_end_confirm_frames", 5);
 	config.bite_threshold = ini.getDouble("vrchat_fish", "bite_threshold", 0.75);
-	config.minigame_threshold = ini.getDouble("vrchat_fish", "minigame_threshold", 0.75);
+	config.minigame_threshold = ini.getDouble("vrchat_fish", "minigame_threshold", 0.7);
 	config.fish_icon_threshold = ini.getDouble("vrchat_fish", "fish_icon_threshold", 0.44);
 	config.slider_threshold = ini.getDouble("vrchat_fish", "slider_threshold", 0.88);
 	config.control_interval_ms = ini.getInt("vrchat_fish", "control_interval_ms", 20);
