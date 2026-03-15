@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.1] - 2026-03-15
+
+### Added
+- `fish_icon_alt11.png` template for new fish type
+
+### Removed
+- Unused `ExclamationPoint.png` template
+
 ## [2.5.0] - 2026-03-11
 
 ### Added
