@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.3] - 2026-03-17
+
+### Fixed
+- OSC anti-AFK labels no longer say "Shake" when mode is set to Jump (all languages)
+
+### Changed
+- Default `force_resolution` changed from 0 to 1 (match recommended setup)
+- Default `osc_shake_post_delay_ms` changed from 500 to 2000
+- Added debug log for anti-AFK post delay timing
+
 ## [2.5.2] - 2026-03-16
 
 ### Added

@@ -91,7 +91,7 @@ void loadConfig() {
 
 	config.window_class = ini.get("vrchat_fish", "window_class", "UnityWndClass");
 	config.window_title_contains = ini.get("vrchat_fish", "window_title_contains", "VRChat");
-	config.force_resolution = ini.getInt("vrchat_fish", "force_resolution", 0);
+	config.force_resolution = ini.getInt("vrchat_fish", "force_resolution", 1);
 	config.background_input = ini.getInt("vrchat_fish", "background_input", 1) != 0;
 	config.target_width = ini.getInt("vrchat_fish", "target_width", 1280);
 	config.target_height = ini.getInt("vrchat_fish", "target_height", 960);
@@ -206,7 +206,7 @@ void loadConfig() {
 	config.osc_anti_afk_mode = ini.getInt("vrchat_fish", "osc_anti_afk_mode", 1);
 	config.osc_shake_duration_ms = ini.getInt("vrchat_fish", "osc_shake_duration_ms", 20);
 	config.osc_shake_after_fails = ini.getInt("vrchat_fish", "osc_shake_after_fails", 0);
-	config.osc_shake_post_delay_ms = ini.getInt("vrchat_fish", "osc_shake_post_delay_ms", 500);
+	config.osc_shake_post_delay_ms = ini.getInt("vrchat_fish", "osc_shake_post_delay_ms", 2000);
 	config.gui_preview_enabled = ini.getInt("gui", "preview_enabled", 1);
 	config.gui_preview_boxes = ini.getInt("gui", "preview_boxes", 1);
 	config.language = ini.get("gui", "language", "en");
@@ -716,6 +716,9 @@ void fishVrchat() {
 					}
 				}
 				if (config.osc_shake_post_delay_ms > 0) {
+					if (config.vr_debug) {
+						LOG_DEBUG("[vrchat_fish] anti-AFK post delay %dms before cast", config.osc_shake_post_delay_ms);
+					}
 					sleepWithPause(config.osc_shake_post_delay_ms);
 				}
 			}
