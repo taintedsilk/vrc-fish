@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.2] - 2026-03-16
+
+### Added
+- `fish_icon_alt12.png` template (Relic Icon) from PR #21
+
+### Changed
+- Updated `fish_icon_alt11.png` (St. Paddy's Token) from PR #21
+
 ## [2.5.1] - 2026-03-15
 
 ### Added
