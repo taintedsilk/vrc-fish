@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.4] - 2026-03-17
+
+### Added
+- Version info resource embedded in exe (Properties > Details tab)
+
 ## [2.5.3] - 2026-03-17
 
 ### Fixed
