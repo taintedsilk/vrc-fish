@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.5] - 2026-03-19
+
+### Fixed
+- Re-cropped `fish_icon_alt11.png` (St. Paddy's Token) to correct 33x32 dimensions for reliable detection
+
 ## [2.5.4] - 2026-03-17
 
 ### Added
