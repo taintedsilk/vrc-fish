@@ -76,6 +76,19 @@ example/
 .DS_Store
 Thumbs.db
 
+# Logs
+*.log
+
+# Test coverage
+coverage/
+
+# Environment files
+.env*
+!.env.example
+
+# Private dev notes (local only)
+.dev/
+
 # Debug captures
 debug_vrchat/
 
