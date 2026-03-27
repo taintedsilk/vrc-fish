@@ -1080,7 +1080,17 @@ void fishVrchat() {
 					ok = detectFishAndSliderFast(gray, matchRoi, &det, cachedTrackScale, cachedTrackAngle, cachedFishTplIdx);
 					if (!ok) {
 						int bestIdx = 0;
-						ok = detectFishAndSliderFull(gray, matchRoi, &det, cachedTrackScale, cachedTrackAngle, &bestIdx);
+						// Slowly increase the search area from the fixed track area instead of instantly searching the entire screen
+						int expandPx = consecutiveMiss * 50; 
+						Rect expandedRoi = matchRoi;
+						if (expandPx > 0) {
+							expandedRoi.x -= expandPx;
+							expandedRoi.y -= expandPx;
+							expandedRoi.width += (expandPx * 2);
+							expandedRoi.height += (expandPx * 2);
+							expandedRoi = clampRect(expandedRoi, gray.size());
+						}
+						ok = detectFishAndSliderFull(gray, expandedRoi, &det, cachedTrackScale, cachedTrackAngle, &bestIdx);
 						if (ok) {
 							cachedFishTplIdx = bestIdx;
 						}
