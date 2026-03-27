@@ -1089,6 +1089,11 @@ void fishVrchat() {
 							fishTplConfirmCount++;
 							if (fishTplConfirmCount >= 20) {
 								fishTplConfirmed = true;
+								std::string fishName = "Unknown";
+								if (cachedFishTplIdx >= 0 && cachedFishTplIdx < (int)params.tpl_vr_fish_icon_files.size()) {
+									fishName = params.tpl_vr_fish_icon_files[cachedFishTplIdx];
+								}
+								LOG_INFO("[ctrl] Fish type confirmed: %s", fishName.c_str());
 							}
 						}
 					} else {
@@ -1114,6 +1119,14 @@ void fishVrchat() {
 							if (ok) {
 								if (cachedFishTplIdx == bestIdx) {
 									fishTplConfirmCount++;
+									if (!fishTplConfirmed && fishTplConfirmCount >= 20) {
+										fishTplConfirmed = true;
+										std::string fishName = "Unknown";
+										if (cachedFishTplIdx >= 0 && cachedFishTplIdx < (int)params.tpl_vr_fish_icon_files.size()) {
+											fishName = params.tpl_vr_fish_icon_files[cachedFishTplIdx];
+										}
+										LOG_INFO("[ctrl] Fish type confirmed (recovery): %s", fishName.c_str());
+									}
 								} else {
 									cachedFishTplIdx = bestIdx;
 									fishTplConfirmCount = 1;
@@ -1140,12 +1153,42 @@ void fishVrchat() {
 				}
 				minigameMissingFrames++;
 				consecutiveMiss++;
-				// 连续 MISS >= N 帧才松开鼠标（避免单次全检测失败导致松手）
+				
+				// 连续 MISS >= N 帧后，尝试让滑块悬停在原地，而不是直接松手掉落
 				int missReleaseFrames = config.miss_release_frames;
 				if (missReleaseFrames < 1) missReleaseFrames = 1;
-				if (consecutiveMiss >= missReleaseFrames && holding) {
-					mouseLeftUp();
-					holding = false;
+				
+				static double hoverAcc = 0.5;
+				if (consecutiveMiss == 1) {
+					hoverAcc = 0.5; // Reset accumulator on the first miss frame
+				}
+
+				if (consecutiveMiss >= missReleaseFrames) {
+					double gravMult = config.bb_gravity;
+					if (gravMult < 0.1) gravMult = 0.1;
+					double thrustMult = config.bb_thrust;
+					if (thrustMult < 0.1) thrustMult = 0.1;
+					
+					// Calculate the duty cycle required to maintain zero net acceleration
+					// sVel += gravity * dt; if (press) sVel -= thrust * dt;
+					// To hover: gravity - (dutyCycle * thrust) = 0 => dutyCycle = gravity / thrust
+					double dutyCycle = (GAME_GRAVITY * gravMult) / (GAME_PLAYER_SPEED * thrustMult);
+					if (dutyCycle > 1.0) dutyCycle = 1.0;
+					
+					hoverAcc += dutyCycle;
+					bool wantHold = false;
+					if (hoverAcc >= 1.0) {
+						hoverAcc -= 1.0;
+						wantHold = true;
+					}
+					
+					if (wantHold && !holding) {
+						mouseLeftDown();
+						holding = true;
+					} else if (!wantHold && holding) {
+						mouseLeftUp();
+						holding = false;
+					}
 				}
 				int endFrames = config.game_end_confirm_frames;
 				if (endFrames < config.minigame_end_min_frames) endFrames = config.minigame_end_min_frames;
