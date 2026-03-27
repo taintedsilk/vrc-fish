@@ -529,6 +529,8 @@ void fishVrchat() {
 			double cachedTrackAngle = 0.0;
 			int    cachedFishTplIdx = 0;     // params.tpl_vr_fish_icons 的索引
 			bool   hasCachedFishTpl = false;
+			int    fishTplConfirmCount = 0;  // Number of frames confirming the same fish type
+			bool   fishTplConfirmed = false; // Whether the fish type is locked in for this round
 
 		// ML 录制模式状态
 		std::ofstream recordFile;
@@ -828,6 +830,8 @@ void fishVrchat() {
 				cachedTrackScale = 1.0;
 				cachedTrackAngle = 0.0;
 				hasCachedFishTpl = false;
+				fishTplConfirmCount = 0;
+				fishTplConfirmed = false;
 				hasPrevTs = false;
 				lastDtRatio = 1.0;
 				lastGoodSliderH = 0;
@@ -1074,14 +1078,23 @@ void fishVrchat() {
 					if (ok) {
 						cachedFishTplIdx = bestIdx;
 						hasCachedFishTpl = true;
+						fishTplConfirmCount = 1;
 					}
 					didFullDetect = true;
 				} else {
 					ok = detectFishAndSliderFast(gray, matchRoi, &det, cachedTrackScale, cachedTrackAngle, cachedFishTplIdx);
-					if (!ok) {
+					if (ok) {
+						// Tally confirmation frames
+						if (!fishTplConfirmed) {
+							fishTplConfirmCount++;
+							if (fishTplConfirmCount >= 20) {
+								fishTplConfirmed = true;
+							}
+						}
+					} else {
 						int bestIdx = 0;
 						// Slowly increase the search area from the fixed track area instead of instantly searching the entire screen
-						int expandPx = consecutiveMiss * 50; 
+						int expandPx = consecutiveMiss * 20; 
 						Rect expandedRoi = matchRoi;
 						if (expandPx > 0) {
 							expandedRoi.x -= expandPx;
@@ -1090,11 +1103,24 @@ void fishVrchat() {
 							expandedRoi.height += (expandPx * 2);
 							expandedRoi = clampRect(expandedRoi, gray.size());
 						}
-						ok = detectFishAndSliderFull(gray, expandedRoi, &det, cachedTrackScale, cachedTrackAngle, &bestIdx);
-						if (ok) {
-							cachedFishTplIdx = bestIdx;
+						
+						if (fishTplConfirmed) {
+							// Once confirmed, only use the known fish template on the expanded ROI
+							ok = detectFishAndSliderFast(gray, expandedRoi, &det, cachedTrackScale, cachedTrackAngle, cachedFishTplIdx);
+							didFullDetect = false;
+						} else {
+							// Still uncertain, might be a different fish, do full search
+							ok = detectFishAndSliderFull(gray, expandedRoi, &det, cachedTrackScale, cachedTrackAngle, &bestIdx);
+							if (ok) {
+								if (cachedFishTplIdx == bestIdx) {
+									fishTplConfirmCount++;
+								} else {
+									cachedFishTplIdx = bestIdx;
+									fishTplConfirmCount = 1;
+								}
+							}
+							didFullDetect = true;
 						}
-						didFullDetect = true;
 					}
 				}
 	
