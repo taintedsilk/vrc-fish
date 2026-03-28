@@ -1096,26 +1096,16 @@ void fishVrchat() {
 								LOG_INFO("[ctrl] Fish type confirmed: %s", fishName.c_str());
 							}
 						}
-					} else {
+										} else {
 						int bestIdx = 0;
-						// Slowly increase the search area from the fixed track area instead of instantly searching the entire screen
-						int expandPx = consecutiveMiss * 20; 
-						Rect expandedRoi = matchRoi;
-						if (expandPx > 0) {
-							expandedRoi.x -= expandPx;
-							expandedRoi.y -= expandPx;
-							expandedRoi.width += (expandPx * 2);
-							expandedRoi.height += (expandPx * 2);
-							expandedRoi = clampRect(expandedRoi, gray.size());
-						}
 						
 						if (fishTplConfirmed) {
-							// Once confirmed, only use the known fish template on the expanded ROI
-							ok = detectFishAndSliderFast(gray, expandedRoi, &det, cachedTrackScale, cachedTrackAngle, cachedFishTplIdx);
+							// Once confirmed, only use the known fish template on the match ROI
+							ok = detectFishAndSliderFast(gray, matchRoi, &det, cachedTrackScale, cachedTrackAngle, cachedFishTplIdx);
 							didFullDetect = false;
 						} else {
 							// Still uncertain, might be a different fish, do full search
-							ok = detectFishAndSliderFull(gray, expandedRoi, &det, cachedTrackScale, cachedTrackAngle, &bestIdx);
+							ok = detectFishAndSliderFull(gray, matchRoi, &det, cachedTrackScale, cachedTrackAngle, &bestIdx);
 							if (ok) {
 								if (cachedFishTplIdx == bestIdx) {
 									fishTplConfirmCount++;
