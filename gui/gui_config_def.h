@@ -101,6 +101,7 @@ struct g_config {
 	double slider_velocity_cap;
 	double fish_velocity_cap;
 	double base_dt_ms;
+	int fish_difficulty;
 
 	int fish_bounce_predict;
 	double fish_accel_alpha;

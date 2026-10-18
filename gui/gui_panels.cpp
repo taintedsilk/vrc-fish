@@ -326,6 +326,7 @@ static void RenderConfigEditor() {
 	// === Fish Prediction ===
 	if (ImGui::CollapsingHeader(T("sec_fish_predict"))) {
 		SliderDouble(T("cfg_accel_alpha"), &config.fish_accel_alpha, 0.0f, 1.0f, "%.0f%%", true);
+		ImGui::SliderInt("Fish Difficulty (1-9)", &config.fish_difficulty, 1, 9);
 		SliderDouble(T("cfg_vel_decay"), &config.fish_vel_decay, 0.0f, 1.0f, "%.0f%%", true);
 		InputDouble(T("cfg_accel_cap"), &config.fish_accel_cap, 1.0f, 5.0f, "%.1f");
 	}

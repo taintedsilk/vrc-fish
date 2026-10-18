@@ -1,0 +1,181 @@
+diff --git a/config.ini b/config.ini
+index a1b2c3d..e4f5g6h 100644
+--- a/config.ini
++++ b/config.ini
+@@ -62,6 +62,7 @@ minigame_end_min_frames = 10
+ slider_velocity_cap = 30
+ fish_velocity_cap = 15
+ base_dt_ms = 50
++fish_difficulty = 5
+ fish_bounce_predict = 0
+ fish_accel_alpha = 0.9
+ fish_vel_decay = 0.2
+diff --git a/gui/gui_config_def.h b/gui/gui_config_def.h
+index b2c3d4e..f5g6h7i 100644
+--- a/gui/gui_config_def.h
++++ b/gui/gui_config_def.h
+@@ -87,6 +87,7 @@ struct g_config {
+ 	double slider_velocity_cap;
+ 	double fish_velocity_cap;
+ 	double base_dt_ms;
++	int fish_difficulty;
+ 
+ 	int fish_bounce_predict;
+ 	double fish_accel_alpha;
+diff --git a/gui/gui_panels.cpp b/gui/gui_panels.cpp
+index c3d4e5f..g6h7i8j 100644
+--- a/gui/gui_panels.cpp
++++ b/gui/gui_panels.cpp
+@@ -348,6 +348,7 @@ static void RenderConfigEditor() {
+ 	// === Fish Prediction ===
+ 	if (ImGui::CollapsingHeader(T("sec_fish_predict"))) {
+ 		SliderDouble(T("cfg_accel_alpha"), &config.fish_accel_alpha, 0.0f, 1.0f, "%.0f%%", true);
++		ImGui::SliderInt("Fish Difficulty (1-9)", &config.fish_difficulty, 1, 9);
+ 		SliderDouble(T("cfg_vel_decay"), &config.fish_vel_decay, 0.0f, 1.0f, "%.0f%%", true);
+ 		InputDouble(T("cfg_accel_cap"), &config.fish_accel_cap, 1.0f, 5.0f, "%.1f");
+ 	}
+diff --git a/vrc-fish.cpp b/vrc-fish.cpp
+index d4e5f6g..h7i8j9k 100644
+--- a/vrc-fish.cpp
++++ b/vrc-fish.cpp
+@@ -41,6 +41,9 @@ using namespace cv;
+ static constexpr double GAME_GRAVITY      = 1.25;   // units/s^2, pulls slider down
+ static constexpr double GAME_PLAYER_SPEED = 3.75;   // units/s^2, pushes slider up when held
+ static constexpr double GAME_BOUNCE       = 0.3;    // wall bounce factor (30% velocity reversal)
++static constexpr double GAME_FISH_SMOOTH_TIME_EASY = 1.0;   // smoothTime at difficulty 1
++static constexpr double GAME_FISH_SMOOTH_TIME_HARD = 0.19;  // smoothTime at difficulty 9
++static constexpr double GAME_FISH_HITBOX_RATIO     = 0.1;   // fish target hitbox is 0.1 normalized
+ 
+ // GUI shared state
+ FishingStatus g_fishStatus;
+@@ -155,6 +158,7 @@ void loadConfig() {
+ 	config.slider_velocity_cap = ini.getDouble("vrchat_fish", "slider_velocity_cap", 30.0);
+ 	config.fish_velocity_cap = ini.getDouble("vrchat_fish", "fish_velocity_cap", 15.0);
+ 	config.base_dt_ms = ini.getDouble("vrchat_fish", "base_dt_ms", 50.0);
++	config.fish_difficulty = ini.getInt("vrchat_fish", "fish_difficulty", 5);
+ 
+ 	config.fish_bounce_predict = ini.getInt("vrchat_fish", "fish_bounce_predict", 0); // game has no fish bounce
+ 	config.fish_accel_alpha = ini.getDouble("vrchat_fish", "fish_accel_alpha", 0.9);
+@@ -330,6 +334,7 @@ void saveConfigToIni() {
+ 	setDbl("vrchat_fish", "slider_velocity_cap", config.slider_velocity_cap);
+ 	setDbl("vrchat_fish", "fish_velocity_cap", config.fish_velocity_cap);
+ 	setDbl("vrchat_fish", "base_dt_ms", config.base_dt_ms);
++	setInt("vrchat_fish", "fish_difficulty", config.fish_difficulty);
+ 	setInt("vrchat_fish", "fish_bounce_predict", config.fish_bounce_predict);
+ 	setDbl("vrchat_fish", "fish_accel_alpha", config.fish_accel_alpha);
+ 	setDbl("vrchat_fish", "fish_vel_decay", config.fish_vel_decay);
+@@ -1288,61 +1293,59 @@ void fishVrchat() {
+ 					double marginRatio = config.bb_margin_ratio;
+ 					if (marginRatio < 0.0) marginRatio = 0.0;
+ 					if (marginRatio > 0.45) marginRatio = 0.45;
+-					double margin = sliderH * marginRatio;
+-
+-					double fishVelDecay = config.fish_vel_decay;
+-					if (fishVelDecay < 0.5) fishVelDecay = 0.5;
+-					if (fishVelDecay > 1.0) fishVelDecay = 1.0;
+-
+-					auto simCost = [&](bool press) -> double {
+-						// Convert from px/frame to px/s for game-accurate simulation
+-						double sVel = smoothVelocity / dt_step;
+-						double sCY  = (double)sliderCY;
+-						double fY   = (double)fishY;
+-						double fVel = smoothFishVel / dt_step;
+-						double fAcc = smoothFishAccel / (dt_step * dt_step);
+-						double cost = 0.0;
+-
+-						double trackCYMin = (double)fixedTrackRoi.y + trackPadY;
+-						double trackCYMax = (double)(fixedTrackRoi.y + fixedTrackRoi.height) - trackPadY;
+-						if (trackCYMin > trackCYMax) trackCYMin = trackCYMax = (trackCYMin + trackCYMax) / 2.0;
+-
+-						for (int step = 0; step < horizon; step++) {
+-							// Slider physics (game-accurate)
+-							sVel += gravity_px * dt_step;
+-							if (press) sVel -= playerSpeed_px * dt_step;
+-							sCY += sVel * dt_step;
+-
+-							// Wall bounce: velocity *= -0.3
+-							if (sCY < trackCYMin) {
+-								sCY = trackCYMin;
+-								sVel = -sVel * GAME_BOUNCE;
+-							} else if (sCY > trackCYMax) {
+-								sCY = trackCYMax;
+-								sVel = -sVel * GAME_BOUNCE;
+-							}
+-
+-							// Fish prediction (velocity extrapolation, no bounce, just clamp)
+-							fVel += fAcc * dt_step;
+-							fVel *= fishVelDecay;
+-							fY += fVel * dt_step;
+-
+-							if (fY < trackCYMin) fY = trackCYMin;
+-							if (fY > trackCYMax) fY = trackCYMax;
+-
+-							// Cost: distance of fish from slider safe zone
+-							double halfH = (double)sliderH / 2.0;
+-							double sTop = sCY - halfH + margin;
+-							double sBot = sCY + halfH - margin;
+-
+-							if (sTop >= sBot) {
+-								cost += abs(fY - sCY);
+-							} else if (fY < sTop) {
+-								cost += (sTop - fY);
+-							} else if (fY > sBot) {
+-								cost += (fY - sBot);
+-							}
+-						}
++					// Datamined exponential smoothing decay rate (scales from 1.0/s to 5.26/s)
++					int diffSetting = std::clamp(config.fish_difficulty, 1, 9);
++					double diffNorm = (double)(diffSetting - 1) / 8.0;
++					double smoothTime = (1.0 - diffNorm) * GAME_FISH_SMOOTH_TIME_EASY + diffNorm * GAME_FISH_SMOOTH_TIME_HARD;
++					double decayRate = 1.0 / smoothTime;
++
++					double trackCYMin = (double)fixedTrackRoi.y + trackPadY;
++					double trackCYMax = (double)(fixedTrackRoi.y + fixedTrackRoi.height) - trackPadY;
++					if (trackCYMin > trackCYMax) trackCYMin = trackCYMax = (trackCYMin + trackCYMax) / 2.0;
++
++					// Estimate instantaneous target position from observed velocity
++					double currentFishVelPxS = smoothFishVel / dt_step;
++					double estimatedTargetY = (double)fishY + (currentFishVelPxS / decayRate);
++					estimatedTargetY = std::clamp(estimatedTargetY, trackCYMin, trackCYMax);
++
++					// Overlap threshold: (fishTargetHitbox + playerTargetSize) / 2
++					double fishHitboxPx = trackHeightPx * GAME_FISH_HITBOX_RATIO;
++					double halfOverlapThreshold = (fishHitboxPx + (double)sliderH) * 0.5 * (1.0 - marginRatio);
++
++					auto simCost = [&](bool press) -> double {
++						double sVel = smoothVelocity / dt_step;
++						double sCY  = (double)sliderCY;
++						double fY   = (double)fishY;
++						double cost = 0.0;
++
++						for (int step = 0; step < horizon; step++) {
++							// Slider physics (game-accurate)
++							sVel += gravity_px * dt_step;
++							if (press) sVel -= playerSpeed_px * dt_step;
++							sCY += sVel * dt_step;
++
++							// Wall bounce: velocity *= -0.3
++							if (sCY < trackCYMin) {
++								sCY = trackCYMin;
++								sVel = -sVel * GAME_BOUNCE;
++							} else if (sCY > trackCYMax) {
++								sCY = trackCYMax;
++								sVel = -sVel * GAME_BOUNCE;
++							}
++
++							// Fish movement: exponential smoothing toward target (no bounce, clamped)
++							double alpha = 1.0 - std::exp(-decayRate * dt_step);
++							fY += (estimatedTargetY - fY) * alpha;
++
++							if (fY < trackCYMin) fY = trackCYMin;
++							if (fY > trackCYMax) fY = trackCYMax;
++
++							// Cost: penalty when fish falls outside the actual catch hitbox
++							double dist = std::abs(fY - sCY);
++							if (dist > halfOverlapThreshold) {
++								cost += (dist - halfOverlapThreshold);
++							}
++						}
+ 						// Boundary deceleration penalty
+ 						double bZone   = config.bb_boundary_zone;
+ 						double bWeight = config.bb_boundary_weight;
