@@ -11,4 +11,4 @@ TplMatch matchBest(const cv::Mat& srcGray, const GrayTpl& tpl, int defaultMethod
 TplMatch matchBestRoi(const cv::Mat& srcGray, const GrayTpl& tpl, cv::Rect roi, int method = cv::TM_CCOEFF_NORMED);
 TplMatch matchBestRoiAtScaleAndAngle(const cv::Mat& srcGray, const GrayTpl& tpl, cv::Rect roi, double scale, double angleDeg, int method = cv::TM_CCOEFF_NORMED);
 TplMatch matchBestRoiMultiScale(const cv::Mat& srcGray, const GrayTpl& tpl, cv::Rect roi, int method = cv::TM_CCOEFF_NORMED, double* bestScaleOut = nullptr);
-TplMatch matchBestRoiTrackBarAutoScale(const cv::Mat& srcGray, const GrayTpl& tpl, cv::Rect roi, int method = cv::TM_CCOEFF_NORMED, double* bestScaleOut = nullptr, double* bestAngleOut = nullptr);
+TplMatch matchBestRoiTrackBarAutoScale(const cv::Mat& srcGray, const GrayTpl& tpl, cv::Rect roi, int method = cv::TM_CCOEFF_NORMED, double* bestScaleOut = nullptr, double* bestAngleOut = nullptr, bool scaleOnly = false);

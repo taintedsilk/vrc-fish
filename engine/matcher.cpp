@@ -550,7 +550,8 @@ TplMatch matchBestRoiTrackBarAutoScale(
 	Rect roi,
 	int method,
 	double* bestScaleOut,
-	double* bestAngleOut
+	double* bestAngleOut,
+	bool scaleOnly
 ) {
 	std::vector<double> coarse = buildTrackBarScales();
 	double bestScale = 1.0;
@@ -566,7 +567,7 @@ TplMatch matchBestRoiTrackBarAutoScale(
 		&bestScale
 	);
 	double bestAngle = 0.0;
-	if (std::isfinite(config.track_angle_min) && std::isfinite(config.track_angle_max)
+	if (!scaleOnly && std::isfinite(config.track_angle_min) && std::isfinite(config.track_angle_max)
 		&& std::isfinite(config.track_angle_step)
 		&& config.track_angle_step > 0.0) {
 		double aMin = config.track_angle_min;

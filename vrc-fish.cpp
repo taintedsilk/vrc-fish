@@ -182,6 +182,8 @@ void loadConfig() {
 	config.track_lock_miss_min_frames = ini.getInt("vrchat_fish", "track_lock_miss_min_frames", 60);
 	config.miss_release_frames = ini.getInt("vrchat_fish", "miss_release_frames", 3);
 	config.minigame_end_min_frames = ini.getInt("vrchat_fish", "minigame_end_min_frames", 10);
+	config.track_verify_interval = ini.getInt("vrchat_fish", "track_verify_interval", 60);
+	config.track_verify_fail_count = ini.getInt("vrchat_fish", "track_verify_fail_count", 3);
 	config.slider_tpl_jump_threshold = ini.getInt("vrchat_fish", "slider_tpl_jump_threshold", 150);
 	config.fish_jump_threshold = ini.getInt("vrchat_fish", "fish_jump_threshold", 80);
 	config.slider_height_stable_min = ini.getInt("vrchat_fish", "slider_height_stable_min", 20);
@@ -194,6 +196,7 @@ void loadConfig() {
 	config.fish_accel_alpha = ini.getDouble("vrchat_fish", "fish_accel_alpha", 0.9);
 	config.fish_vel_decay = ini.getDouble("vrchat_fish", "fish_vel_decay", 0.2);
 	config.fish_accel_cap = ini.getDouble("vrchat_fish", "fish_accel_cap", 10.0);
+	config.fish_exp_alpha = ini.getDouble("vrchat_fish", "fish_exp_alpha", 0.10);
 
 	config.reactive_override = ini.getInt("vrchat_fish", "reactive_override", 1);
 	config.reactive_dev_ratio = ini.getDouble("vrchat_fish", "reactive_dev_ratio", 0.55);
@@ -439,6 +442,8 @@ void saveConfigToIni() {
 	setInt("vrchat_fish", "track_lock_miss_min_frames", config.track_lock_miss_min_frames);
 	setInt("vrchat_fish", "miss_release_frames", config.miss_release_frames);
 	setInt("vrchat_fish", "minigame_end_min_frames", config.minigame_end_min_frames);
+	setInt("vrchat_fish", "track_verify_interval", config.track_verify_interval);
+	setInt("vrchat_fish", "track_verify_fail_count", config.track_verify_fail_count);
 	setInt("vrchat_fish", "slider_tpl_jump_threshold", config.slider_tpl_jump_threshold);
 	setInt("vrchat_fish", "fish_jump_threshold", config.fish_jump_threshold);
 	setInt("vrchat_fish", "slider_height_stable_min", config.slider_height_stable_min);
@@ -450,6 +455,7 @@ void saveConfigToIni() {
 	setDbl("vrchat_fish", "fish_accel_alpha", config.fish_accel_alpha);
 	setDbl("vrchat_fish", "fish_vel_decay", config.fish_vel_decay);
 	setDbl("vrchat_fish", "fish_accel_cap", config.fish_accel_cap);
+	setDbl("vrchat_fish", "fish_exp_alpha", config.fish_exp_alpha);
 	setInt("vrchat_fish", "reactive_override", config.reactive_override);
 	setDbl("vrchat_fish", "reactive_dev_ratio", config.reactive_dev_ratio);
 	setDbl("vrchat_fish", "reactive_grow_threshold", config.reactive_grow_threshold);
@@ -527,6 +533,8 @@ void fishVrchat() {
 	int consecutiveFails = 0;      // consecutive failed casts (for OSC shake trigger)
 	Rect fixedTrackRoi{};          // 首帧定位的固定轨道 ROI（整局不变）
 	bool hasFixedTrack = false;    // 是否已定位轨道
+	int trackVerifyCounter = 0;
+	int trackVerifyFailCount = 0;
 
 			// 快速检测缓存：首帧多尺度确定最佳缩放和模板，后续帧复用
 			double cachedTrackScale = 1.0;
@@ -831,6 +839,8 @@ void fishVrchat() {
 				smoothVelocity = 0.0;
 				smoothFishVel = 0.0;
 				hasFixedTrack = false;
+				trackVerifyCounter = 0;
+				trackVerifyFailCount = 0;
 				cachedTrackScale = 1.0;
 				cachedTrackAngle = 0.0;
 				hasCachedFishTpl = false;
@@ -1067,7 +1077,44 @@ void fishVrchat() {
 						continue;
 					}
 				}
-	
+
+				int verifyInterval = config.track_verify_interval;
+				if (verifyInterval > 0) {
+					trackVerifyCounter++;
+					if (trackVerifyCounter >= verifyInterval) {
+						trackVerifyCounter = 0;
+						TplMatch verifyMatch = matchBestRoiTrackBarAutoScale(
+							gray,
+							params.tpl_vr_minigame_bar_full,
+							searchRoi,
+							TM_CCOEFF_NORMED,
+							nullptr,
+							nullptr,
+							true
+						);
+						if (verifyMatch.score < config.minigame_threshold) {
+							trackVerifyFailCount++;
+							int failsNeeded = config.track_verify_fail_count > 0
+								? config.track_verify_fail_count : 1;
+							if (config.vr_debug || vrLogFile.is_open()) {
+								std::ostringstream oss;
+								oss << "[ctrl] track bar re-verify MISS score=" << verifyMatch.score
+									<< " fail=" << trackVerifyFailCount << "/" << failsNeeded;
+								writeVrLogLine(oss.str(), config.vr_debug);
+							}
+							if (trackVerifyFailCount >= failsNeeded) {
+								if (holding) { mouseLeftUp(); holding = false; }
+								saveDebugFrame(frame, "track_verify_fail", searchRoi);
+								switchState(VrFishState::PostMinigame);
+								sleepControlInterval();
+								continue;
+							}
+						} else {
+							trackVerifyFailCount = 0;
+						}
+					}
+				}
+
 				Rect matchRoi = fixedTrackRoi;
 	
 				FishSliderResult det;
@@ -1417,20 +1464,13 @@ void fishVrchat() {
 					double marginRatio = config.bb_margin_ratio;
 					if (marginRatio < 0.0) marginRatio = 0.0;
 					if (marginRatio > 0.45) marginRatio = 0.45;
-					// Datamined exponential smoothing decay rate (scales from 1.0/s to 5.26/s)
-					int diffSetting = std::clamp(config.fish_difficulty, 1, 9);
-					double diffNorm = (double)(diffSetting - 1) / 8.0;
-					double smoothTime = (1.0 - diffNorm) * GAME_FISH_SMOOTH_TIME_EASY + diffNorm * GAME_FISH_SMOOTH_TIME_HARD;
-					double decayRate = 1.0 / smoothTime;
-
 					double trackCYMin = (double)fixedTrackRoi.y + trackPadY;
 					double trackCYMax = (double)(fixedTrackRoi.y + fixedTrackRoi.height) - trackPadY;
 					if (trackCYMin > trackCYMax) trackCYMin = trackCYMax = (trackCYMin + trackCYMax) / 2.0;
-
-					// Estimate instantaneous target position from observed velocity
-					double currentFishVelPxS = smoothFishVel / dt_step;
-					double estimatedTargetY = (double)fishY + (currentFishVelPxS / decayRate);
-					estimatedTargetY = std::clamp(estimatedTargetY, trackCYMin, trackCYMax);
+					double fishExpAlpha = config.fish_exp_alpha;
+					if (fishExpAlpha < 0.0) fishExpAlpha = 0.0;
+					if (fishExpAlpha > 1.0) fishExpAlpha = 1.0;
+					bool useExpDecay = fishExpAlpha > 0.001;
 
 					// Overlap threshold: (fishTargetHitbox + playerTargetSize) / 2
 					double fishHitboxPx = trackHeightPx * GAME_FISH_HITBOX_RATIO;
@@ -1440,6 +1480,8 @@ void fishVrchat() {
 						double sVel = smoothVelocity / dt_step;
 						double sCY  = (double)sliderCY;
 						double fY   = (double)fishY;
+						double fVel = smoothFishVel / dt_step;
+						double fAcc = smoothFishAccel / (dt_step * dt_step);
 						double cost = 0.0;
 
 						for (int step = 0; step < horizon; step++) {
@@ -1457,12 +1499,21 @@ void fishVrchat() {
 								sVel = -sVel * GAME_BOUNCE;
 							}
 
-							// Fish movement: exponential smoothing toward target (no bounce, clamped)
-							double alpha = 1.0 - std::exp(-decayRate * dt_step);
-							fY += (estimatedTargetY - fY) * alpha;
+							if (useExpDecay) {
+								fVel *= (1.0 - fishExpAlpha);
+							} else {
+								fVel += fAcc * dt_step;
+								fVel *= config.fish_vel_decay;
+							}
+							fY += fVel * dt_step;
 
-							if (fY < trackCYMin) fY = trackCYMin;
-							if (fY > trackCYMax) fY = trackCYMax;
+							if (fY < trackCYMin) {
+								fY = trackCYMin;
+								fVel = 0.0;
+							} else if (fY > trackCYMax) {
+								fY = trackCYMax;
+								fVel = 0.0;
+							}
 
 							// Cost: penalty when fish falls outside the actual catch hitbox
 							double dist = std::abs(fY - sCY);

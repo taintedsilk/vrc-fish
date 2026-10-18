@@ -299,6 +299,8 @@ static void RenderConfigEditor() {
 		ImGui::InputInt(T("cfg_lock_miss_min"), &config.track_lock_miss_min_frames);
 		ImGui::InputInt(T("cfg_miss_release"), &config.miss_release_frames);
 		ImGui::InputInt(T("cfg_end_min_frames"), &config.minigame_end_min_frames);
+		ImGui::InputInt("Track Verify Interval (frames)", &config.track_verify_interval);
+		ImGui::InputInt("Track Verify Fail Count", &config.track_verify_fail_count);
 		ImGui::InputInt(T("cfg_slider_jump"), &config.slider_tpl_jump_threshold);
 		ImGui::InputInt(T("cfg_fish_jump"), &config.fish_jump_threshold);
 		ImGui::InputInt(T("cfg_slider_stable"), &config.slider_height_stable_min);
@@ -325,6 +327,7 @@ static void RenderConfigEditor() {
 
 	// === Fish Prediction ===
 	if (ImGui::CollapsingHeader(T("sec_fish_predict"))) {
+		SliderDouble("Fish Exp Alpha", &config.fish_exp_alpha, 0.0f, 0.5f, "%.3f");
 		SliderDouble(T("cfg_accel_alpha"), &config.fish_accel_alpha, 0.0f, 1.0f, "%.0f%%", true);
 		ImGui::SliderInt("Fish Difficulty (1-9)", &config.fish_difficulty, 1, 9);
 		SliderDouble(T("cfg_vel_decay"), &config.fish_vel_decay, 0.0f, 1.0f, "%.0f%%", true);

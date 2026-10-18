@@ -95,6 +95,8 @@ struct g_config {
 	int track_lock_miss_min_frames;
 	int miss_release_frames;
 	int minigame_end_min_frames;
+	int track_verify_interval;
+	int track_verify_fail_count;
 	int slider_tpl_jump_threshold;
 	int fish_jump_threshold;
 	int slider_height_stable_min;
@@ -107,6 +109,7 @@ struct g_config {
 	double fish_accel_alpha;
 	double fish_vel_decay;
 	double fish_accel_cap;
+	double fish_exp_alpha;
 
 	int reactive_override;
 	double reactive_dev_ratio;
